@@ -5,13 +5,19 @@
 # Run as your normal user; it calls sudo for the privileged bits.
 #
 # Usage: mythic-setup.sh [agent] [profile]
-#   defaults: agent=apollo (Windows C#), profile=http
-#   alternatives worth a look: poseidon (linux/mac), athena (cross-plat .NET),
-#   medusa (python). See `cht c2`. Uncommon agent > default = less signatured.
+#   defaults: agent=thanatos (Rust, Windows+Linux), profile=http
+#   why not apollo: apollo (C#) is the most common Mythic agent, so it's the
+#   most signatured. Rust/C agents are far less represented in vendor rules.
+#   other maintained, uncommon options (pass as arg 1):
+#     xenon      C,    Windows        (freshest — updated 2026)
+#     kharon     C++,  Windows        (PIC, heavier feature set)
+#     poseidon   Go,   Linux/macOS
+#     medusa     Python, cross-plat
+#   See `cht c2`. Uncommon agent > default = less signatured.
 set -uo pipefail
 
 MYTHIC_DIR="${MYTHIC_DIR:-$HOME/opt/Mythic}"
-AGENT="${1:-apollo}"
+AGENT="${1:-thanatos}"
 PROFILE="${2:-http}"
 
 say() { printf '\n\033[1;36m[*]\033[0m %s\n' "$*"; }
