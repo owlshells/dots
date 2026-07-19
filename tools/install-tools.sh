@@ -19,7 +19,8 @@ APT_PKGS=(
     feroxbuster     # content discovery
     proxychains4    # SOCKS chaining for pivots
     evil-winrm      # WinRM shell
-    kerbrute        # pre-auth user enum / spray
+    python3-dev     # headers for pip builds (netifaces -> pwncat-cs)
+    build-essential # C toolchain for the same
     hashcat         # cracking (see `crack`)
     ligolo-ng       # tunneling (kali repo; else grab release binary)
     chisel          # tunneling fallback
@@ -31,6 +32,7 @@ PIPX_PKGS=(
 )
 
 GO_PKGS=(
+    "github.com/ropnop/kerbrute@latest"                         # not in Kali apt
     "github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
     "github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
 )
@@ -39,7 +41,15 @@ say "apt packages"
 missing=()
 for p in "${APT_PKGS[@]}"; do have "${p/ripgrep/rg}" || missing+=("$p"); done
 if [ "${#missing[@]}" -gt 0 ]; then
-    sudo apt-get update -qq && sudo apt-get install -y "${missing[@]}"
+    sudo apt-get update -qq
+    # Filter to packages apt actually knows about — one unknown name would
+    # otherwise abort the whole `apt-get install` and take everything with it.
+    avail=(); skip=()
+    for p in "${missing[@]}"; do
+        if apt-cache show "$p" >/dev/null 2>&1; then avail+=("$p"); else skip+=("$p"); fi
+    done
+    [ "${#avail[@]}" -gt 0 ] && sudo apt-get install -y "${avail[@]}"
+    [ "${#skip[@]}" -gt 0 ] && echo "not in apt (installed via go/pipx instead): ${skip[*]}"
 else
     echo "all present"
 fi
