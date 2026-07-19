@@ -16,6 +16,13 @@ APT_PKGS=(
     zoxide          # smarter cd
     responder       # LLMNR/NBT-NS poisoner
     feroxbuster     # content discovery
+    proxychains4    # SOCKS chaining for pivots
+    evil-winrm      # WinRM shell
+    kerbrute        # pre-auth user enum / spray
+    hashcat         # cracking (see `crack`)
+    ligolo-ng       # tunneling (kali repo; else grab release binary)
+    chisel          # tunneling fallback
+    bloodhound      # AD graph (kali metapackage)
 )
 
 PIPX_PKGS=(
