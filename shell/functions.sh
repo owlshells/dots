@@ -227,7 +227,8 @@ mythic() {
     if [ "$1" = "creds" ]; then
         echo "url:  https://127.0.0.1:7443"
         echo "user: mythic_admin"
-        echo "pass: $(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$dir/.env" | cut -d= -f2-)"
+        local p; p=$(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$dir/.env" 2>/dev/null | cut -d= -f2-)
+        if [ -n "$p" ]; then echo "pass: $p"; else echo "pass: (not in .env — retrieve from your password manager)"; fi
         return
     fi
     ( cd "$dir" && sudo ./mythic-cli "$@" )
