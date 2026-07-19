@@ -32,17 +32,27 @@ if [ ! -d "$MYTHIC_DIR/.git" ]; then
 fi
 cd "$MYTHIC_DIR" || die "cannot cd $MYTHIC_DIR"
 
-# 2. Docker (use Mythic's bundled Kali installer if docker is absent)
+# 2. Docker — pick Mythic's bundled installer matching the distro (works on a
+# cloud Ubuntu/Debian box or on local Kali).
 if ! command -v docker >/dev/null; then
-    say "installing Docker via Mythic's bundled Kali installer (sudo)"
-    [ -f ./install_docker_kali.sh ] || die "install_docker_kali.sh not found"
-    sudo ./install_docker_kali.sh || die "docker install failed"
+    distro_id="$(. /etc/os-release 2>/dev/null && echo "${ID:-}")"
+    case "$distro_id" in
+        kali)          installer=./install_docker_kali.sh ;;
+        ubuntu)        installer=./install_docker_ubuntu.sh ;;
+        debian|*)      installer=./install_docker_debian.sh ;;
+    esac
+    say "installing Docker via ${installer} (sudo)"
+    [ -f "$installer" ] || die "$installer not found in $MYTHIC_DIR"
+    sudo "$installer" || die "docker install failed"
 fi
 
-# WSL2 has no systemd by default — make sure the daemon is up
+# Ensure the daemon is up (systemd on most cloud instances; WSL2 has none, so
+# fall back to service, then a raw dockerd).
 if ! sudo docker info >/dev/null 2>&1; then
     say "starting docker daemon"
-    sudo service docker start 2>/dev/null || sudo dockerd >/tmp/dockerd.log 2>&1 &
+    sudo systemctl start docker 2>/dev/null \
+        || sudo service docker start 2>/dev/null \
+        || sudo dockerd >/tmp/dockerd.log 2>&1 &
     sleep 5
     sudo docker info >/dev/null 2>&1 || die "docker daemon not reachable (check /tmp/dockerd.log)"
 fi
@@ -62,10 +72,12 @@ sudo ./mythic-cli install github "https://github.com/MythicC2Profiles/$PROFILE" 
 ENVF="$MYTHIC_DIR/.env"
 
 # 4b. Bind the admin UI to localhost BEFORE first start.
-# By default Mythic exposes nginx (the login) on 0.0.0.0 — with a VPN/tun up
-# that reaches the target network. Agents call back on the C2 *profile* port,
-# not this one, so localhost-only costs nothing operationally. WSL2 mirrors
-# localhost, so the Windows browser still reaches https://127.0.0.1:7443.
+# By default Mythic exposes nginx (the login) on 0.0.0.0. On a cloud teamserver
+# that puts your C2 login on a public IP; locally (with a VPN/tun up) it reaches
+# the target network. Agents call back on the C2 *profile* port, not this one,
+# so localhost-only costs nothing operationally. Reach the UI via:
+#   - cloud: SSH tunnel   ssh -L 7443:127.0.0.1:7443 user@teamserver
+#   - WSL2:  the Windows browser hits https://127.0.0.1:7443 directly
 say "binding admin UI to localhost (NGINX_BIND_LOCALHOST_ONLY=true)"
 sudo test -f "$ENVF" || sudo ./mythic-cli config get DEBUG_LEVEL >/dev/null 2>&1 || true
 sudo ./mythic-cli config set NGINX_BIND_LOCALHOST_ONLY true >/dev/null 2>&1 || true
@@ -83,6 +95,7 @@ say "Mythic is up"
 cat <<EOF
 
   UI:       https://127.0.0.1:7443   (self-signed cert — expect a warning; localhost only)
+            remote box? tunnel it:  ssh -L 7443:127.0.0.1:7443 user@<teamserver>
   user:     mythic_admin
   password: $(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$ENVF" 2>/dev/null | cut -d= -f2- || echo '(mythic creds)')
 
