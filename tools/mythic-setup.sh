@@ -59,65 +59,35 @@ sudo ./mythic-cli install github "https://github.com/MythicAgents/$AGENT"   || d
 say "installing C2 profile: $PROFILE"
 sudo ./mythic-cli install github "https://github.com/MythicC2Profiles/$PROFILE" || die "profile install failed"
 
-# 4b. Seed the admin password from YOUR input — never hardcoded in the repo.
-#   Source, in priority order:
-#     1. $MYTHIC_ADMIN_PW  (pipe from your manager, e.g.
-#        MYTHIC_ADMIN_PW="$(bw get password mythic)" mythic-setup.sh)
-#     2. interactive secure prompt (paste from your manager)
-#     3. neither -> let Mythic generate a random one (read later with `mythic creds`)
-# Only applies to a FRESH install: Mythic sets the admin password when the
-# account is first created, so seeding an already-initialised instance is a
-# no-op (rotate those in the UI: Settings -> your operator -> change password).
 ENVF="$MYTHIC_DIR/.env"
-seed_pw=""
-if [ -n "${MYTHIC_ADMIN_PW:-}" ]; then
-    seed_pw="$MYTHIC_ADMIN_PW"
-elif [ -t 0 ]; then
-    read -rsp "Mythic admin password (paste from your manager; blank = auto-generate): " seed_pw; echo
-fi
 
-if [ -n "$seed_pw" ]; then
-    # .env values are double-quoted; a literal " in the password would break
-    # parsing. Reject it rather than corrupt the file.
-    case "$seed_pw" in *'"'*) die 'password contains a double-quote (") — Mythic .env cannot store it; pick one without it';; esac
-    # Make sure .env exists first (agent install above usually creates it; if not,
-    # a config read generates defaults without starting anything).
-    sudo test -f "$ENVF" || sudo ./mythic-cli config get DEBUG_LEVEL >/dev/null 2>&1 || true
-    if sudo test -f "$ENVF"; then
-        # printf is a shell builtin, so the password never appears in `ps`/argv.
-        { sudo grep -v '^MYTHIC_ADMIN_PASSWORD=' "$ENVF"; printf 'MYTHIC_ADMIN_PASSWORD="%s"\n' "$seed_pw"; } \
-            | sudo tee "$ENVF.tmp" >/dev/null && sudo mv "$ENVF.tmp" "$ENVF"
-        say "admin password seeded into .env from your input (nothing written to the repo)"
-    else
-        say "warn: .env not present yet — Mythic will generate a random password at start"
-        seed_pw=""
-    fi
-fi
+# 4b. Bind the admin UI to localhost BEFORE first start.
+# By default Mythic exposes nginx (the login) on 0.0.0.0 — with a VPN/tun up
+# that reaches the target network. Agents call back on the C2 *profile* port,
+# not this one, so localhost-only costs nothing operationally. WSL2 mirrors
+# localhost, so the Windows browser still reaches https://127.0.0.1:7443.
+say "binding admin UI to localhost (NGINX_BIND_LOCALHOST_ONLY=true)"
+sudo test -f "$ENVF" || sudo ./mythic-cli config get DEBUG_LEVEL >/dev/null 2>&1 || true
+sudo ./mythic-cli config set NGINX_BIND_LOCALHOST_ONLY true >/dev/null 2>&1 || true
 
-# 5. Start
+# 5. Start — Mythic generates a random admin password into .env (the standard flow)
 say "starting Mythic"
 sudo ./mythic-cli start || die "start failed"
 
-# 5b. If we seeded, the account is now created with your password — strip the
-# plaintext from .env so it doesn't linger on disk (your manager is the source
-# of truth). If auto-generated, leave it so you can read it once, then delete.
-if [ -n "$seed_pw" ]; then
-    { sudo grep -v '^MYTHIC_ADMIN_PASSWORD=' "$ENVF"; } | sudo tee "$ENVF.tmp" >/dev/null && sudo mv "$ENVF.tmp" "$ENVF"
-    say "seeded password removed from .env (retrieve it from your manager)"
-fi
+# 5b. Lock down .env: it holds live Postgres/RabbitMQ/JWT secrets in plaintext.
+# Default perms can be world-readable; restrict to owner only.
+sudo chmod 600 "$ENVF" 2>/dev/null || true
 
-# 6. Report creds
+# 6. Report creds (read the password Mythic generated; retrieve later with `mythic creds`)
 say "Mythic is up"
-if [ -n "$seed_pw" ]; then
-    _pwline="password: (the one you supplied — from your manager)"
-else
-    _pwline="password: $(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$ENVF" 2>/dev/null | cut -d= -f2- || echo '(see '"$ENVF"' : MYTHIC_ADMIN_PASSWORD)')"
-fi
 cat <<EOF
 
-  UI:       https://127.0.0.1:7443   (self-signed cert — expect a warning)
+  UI:       https://127.0.0.1:7443   (self-signed cert — expect a warning; localhost only)
   user:     mythic_admin
-  $_pwline
+  password: $(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$ENVF" 2>/dev/null | cut -d= -f2- || echo '(mythic creds)')
+
+  -> copy the password into your manager now if you want a backup; .env (0600)
+     is the source of truth and `mythic creds` reads it on demand.
 
   status:   sudo ./mythic-cli status      (or: mythic status  — see the shell helper)
   stop:     sudo ./mythic-cli stop
