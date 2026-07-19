@@ -1,0 +1,16 @@
+# ~/dotfiles/shell/bash_aliases — red-team shell entrypoint
+# Symlinked to ~/.bash_aliases, which Kali's stock .bashrc already sources.
+# All custom config stays in the repo; Kali's managed files are untouched.
+
+RT_DOTFILES="${RT_DOTFILES:-$HOME/dotfiles}"
+
+for _f in exports aliases functions; do
+    [ -r "$RT_DOTFILES/shell/$_f.sh" ] && . "$RT_DOTFILES/shell/$_f.sh"
+done
+unset _f
+
+# Put repo bin on PATH (addhost, and anything you drop in dotfiles/bin)
+case ":$PATH:" in
+    *":$RT_DOTFILES/bin:"*) ;;
+    *) export PATH="$RT_DOTFILES/bin:$PATH" ;;
+esac

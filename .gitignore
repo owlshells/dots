@@ -1,0 +1,17 @@
+# Never commit secrets, keys, loot, or engagement data
+*.key
+*.pem
+id_*
+id_*.pub
+*.kdbx
+.env
+.env.*
+creds*
+loot/
+ops/
+*.log
+
+# OS / editor cruft
+.DS_Store
+*.swp
+*~

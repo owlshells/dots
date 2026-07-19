@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# addhost — add or update an /etc/hosts entry (handy for CTF/lab vhosts)
+# Usage: addhost <ip> <hostname> [more hostnames...]
+set -euo pipefail
+
+if [ "$#" -lt 2 ]; then
+    echo "usage: addhost <ip> <hostname> [hostname...]" >&2
+    exit 1
+fi
+
+ip="$1"; shift
+names="$*"
+
+# Remove any existing lines for these hostnames, then append a fresh one.
+tmp="$(mktemp)"
+grep -vE "[[:space:]]($(echo "$names" | tr ' ' '|'))([[:space:]]|\$)" /etc/hosts > "$tmp" || true
+printf '%s\t%s\n' "$ip" "$names" >> "$tmp"
+
+if [ -w /etc/hosts ]; then
+    cat "$tmp" > /etc/hosts
+else
+    sudo cp "$tmp" /etc/hosts
+fi
+rm -f "$tmp"
+echo "hosts: $ip -> $names"
