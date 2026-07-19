@@ -36,6 +36,7 @@ target() {
     export RHOST="$1"
     export TARGET_NAME="${2:-$1}"
     export TARGET_DIR="$OPS/$TARGET_NAME"
+    export RT_CMDLOG="$TARGET_DIR/notes/commands.log"   # zsh preexec logs here
     mkdir -p "$TARGET_DIR"/{scans,loot,exploit,notes,www}
     [ -f "$TARGET_DIR/notes/README.md" ] || cat > "$TARGET_DIR/notes/README.md" <<EOF
 # $TARGET_NAME ($RHOST)

@@ -1,0 +1,65 @@
+# ~/dotfiles/shell/zshrc — red-team shell entrypoint for zsh.
+# Sourced from ~/.zshrc via a guarded block (install.sh adds it).
+# Kali's stock ~/.zshrc keeps ownership of prompt, completion, syntax-
+# highlighting and autosuggestions; this file only adds the engagement layer.
+
+RT_DOTFILES="${RT_DOTFILES:-$HOME/dotfiles}"
+
+# --- shared modules (POSIX-clean; sourced by both bash and zsh) ---
+for _f in exports aliases functions ad; do
+    [ -r "$RT_DOTFILES/shell/$_f.sh" ] && source "$RT_DOTFILES/shell/$_f.sh"
+done
+unset _f
+
+# --- repo bin on PATH ---
+case ":$PATH:" in
+    *":$RT_DOTFILES/bin:"*) ;;
+    *) export PATH="$RT_DOTFILES/bin:$PATH" ;;
+esac
+
+# --- zsh-native history (Kali defaults to 1000/2000 — too small for ops) ---
+HISTSIZE=100000
+SAVEHIST=200000
+setopt extended_history       # record start time + duration per command
+setopt hist_ignore_all_dups   # drop older duplicate of a repeated command
+setopt hist_reduce_blanks     # tidy whitespace before saving
+setopt inc_append_history     # write as you go, not just on exit
+setopt share_history          # live history across panes/windows
+
+# --- per-command engagement logging (the preexec hook the zsh block wanted) ---
+# Every command is timestamped into $RT_CMDLOG. `target` points that at the
+# current box's notes/commands.log; otherwise it falls to a daily global log.
+# This is a greppable command ledger for reporting/deconfliction — distinct
+# from tmux pane logging, which captures screen *output*.
+autoload -Uz add-zsh-hook
+_rt_cmdlog() {
+    local log="${RT_CMDLOG:-$OPS/cmdlog/$(date +%F).log}"
+    [ -n "$RT_CMDLOG_OFF" ] && return
+    mkdir -p "${log:h}" 2>/dev/null || return
+    printf '%s  [%s]  %s\n' "$(date '+%F %T')" "${PWD/#$HOME/~}" "$1" >> "$log"
+}
+add-zsh-hook preexec _rt_cmdlog
+
+# --- fzf: Ctrl-R history, Ctrl-T files, Alt-C cd (only if installed) ---
+if command -v fzf >/dev/null; then
+    # fzf 0.48+ ships shell integration via `fzf --zsh`; older Kali packages
+    # drop keybinding files under /usr/share. Try both.
+    if fzf --zsh >/dev/null 2>&1; then
+        source <(fzf --zsh)
+    else
+        for _fz in /usr/share/doc/fzf/examples/key-bindings.zsh \
+                   /usr/share/fzf/key-bindings.zsh \
+                   /usr/share/doc/fzf/examples/completion.zsh \
+                   /usr/share/fzf/completion.zsh; do
+            [ -r "$_fz" ] && source "$_fz"
+        done
+        unset _fz
+    fi
+    export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border"
+fi
+
+# --- direnv: per-engagement env auto-load/unload on cd (only if installed) ---
+command -v direnv >/dev/null && eval "$(direnv hook zsh)"
+
+# --- zsh-only helpers (payload lookup, cmdlog toggle, .envrc template) ---
+[ -r "$RT_DOTFILES/shell/zsh.sh" ] && source "$RT_DOTFILES/shell/zsh.sh"

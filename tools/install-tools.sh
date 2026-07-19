@@ -9,7 +9,8 @@ say()  { printf '\n\033[1;32m[*]\033[0m %s\n' "$*"; }
 APT_PKGS=(
     rlwrap          # readline wrapper for nc listeners
     seclists        # wordlists
-    fzf             # fuzzy finder
+    fzf             # fuzzy finder (Ctrl-R history, `payload` lookup)
+    direnv          # per-engagement .envrc auto-load (see `denv`)
     ripgrep         # fast grep (rg)
     bat             # cat with syntax highlighting (batcat on Kali)
     jq              # json wrangling

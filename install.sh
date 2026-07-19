@@ -25,6 +25,26 @@ link() {
 link "$DOTFILES/shell/bash_aliases" "$HOME/.bash_aliases"
 link "$DOTFILES/tmux/tmux.conf"     "$HOME/.tmux.conf"
 
+# zsh has no stock drop-in Kali auto-sources, so append a guarded hook to
+# ~/.zshrc (non-destructive — Kali keeps its prompt/plugins; we add ours after).
+hook_zsh() {
+    local rc="$HOME/.zshrc" marker="# >>> red-team dotfiles >>>"
+    [ -f "$rc" ] || { echo "skip  no ~/.zshrc (not using zsh?)"; return; }
+    if grep -qF "$marker" "$rc"; then
+        echo "ok    ~/.zshrc hook already present"
+        return
+    fi
+    mkdir -p "$BACKUP"; cp "$rc" "$BACKUP/.zshrc"
+    cat >> "$rc" <<EOF
+
+$marker
+[ -r "\$HOME/dotfiles/shell/zshrc" ] && source "\$HOME/dotfiles/shell/zshrc"
+# <<< red-team dotfiles <<<
+EOF
+    echo "hook  appended red-team block to ~/.zshrc (backup in $BACKUP/)"
+}
+hook_zsh
+
 # Make bin scripts executable
 chmod +x "$DOTFILES"/bin/* 2>/dev/null || true
 
