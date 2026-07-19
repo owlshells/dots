@@ -6,6 +6,8 @@ id_*.pub
 *.kdbx
 .env
 .env.*
+# direnv per-engagement env (created by `denv`); never commit
+.envrc
 creds*
 loot/
 ops/
