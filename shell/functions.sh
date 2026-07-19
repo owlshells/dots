@@ -72,17 +72,19 @@ smbserve() {
 }
 
 # --- listen: upgraded reverse-shell catcher ------------------------------------
-# Prefers pwncat-cs, then rlwrap+nc, then plain nc. Usage: listen [port] (4444)
+# Prefers penelope (maintained, auto-TTY-upgrade + session logging), then
+# rlwrap+nc, then plain nc. Usage: listen [port] (4444)
+# Advanced post-ex is Mythic's job — this tier just catches and upgrades.
 listen() {
     local port="${1:-4444}"
-    if command -v pwncat-cs >/dev/null; then
-        echo "[pwncat-cs] listening on :$port"
-        pwncat-cs -l -p "$port"
+    if command -v penelope >/dev/null; then
+        echo "[penelope] listening on :$port  (auto TTY upgrade + session logging)"
+        penelope -p "$port"
     elif command -v rlwrap >/dev/null; then
         echo "[rlwrap nc] listening on :$port"
         rlwrap nc -lvnp "$port"
     else
-        echo "[nc] listening on :$port  (install rlwrap/pwncat for a better shell)"
+        echo "[nc] listening on :$port  (install penelope/rlwrap for a better shell)"
         nc -lvnp "$port"
     fi
 }

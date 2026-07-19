@@ -27,8 +27,9 @@ APT_PKGS=(
     bloodhound      # AD graph (kali metapackage)
 )
 
+# pkg|command — the installed command name differs from the package name.
 PIPX_PKGS=(
-    pwncat-cs       # post-exploitation reverse-shell handler
+    "penelope-shell-handler|penelope"   # maintained reverse-shell handler
 )
 
 GO_PKGS=(
@@ -56,9 +57,9 @@ fi
 
 if have pipx || sudo apt-get install -y pipx; then
     say "pipx packages"
-    for p in "${PIPX_PKGS[@]}"; do
-        name="${p%%[><=]*}"
-        have "$name" || pipx install "$p"
+    for entry in "${PIPX_PKGS[@]}"; do
+        pkg="${entry%%|*}"; cmd="${entry##*|}"   # split "pkg|command"
+        have "$cmd" || pipx install "$pkg"
     done
 fi
 

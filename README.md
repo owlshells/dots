@@ -52,7 +52,7 @@ scan                     # staged nmap (all ports -> service scan) into ./scans
 fuzz http://boxy/FUZZ    # ffuf with a sane default wordlist
 serve 8000               # HTTP server in cwd, prints the http://LHOST:port url
 smbserve share .         # impacket SMB share
-listen 4444              # reverse-shell catcher (pwncat-cs > rlwrap nc > nc)
+listen 4444              # reverse-shell catcher (penelope > rlwrap nc > nc)
 revshell 4444 bash       # print a reverse-shell one-liner for $LHOST (or: all)
 upgrade-shell            # print the TTY-upgrade sequence
 addhost 10.10.11.42 boxy.htb
