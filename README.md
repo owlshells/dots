@@ -30,7 +30,6 @@ Optional — install the CLI tools referenced here that aren't already present:
 | `shell/aliases.sh`   | `ports`, `myip`, `vpnip`, clipboard, listing, tool shortcuts |
 | `shell/functions.sh` | Engagement workflow helpers (below) |
 | `shell/ad.sh`        | Active Directory helpers (netexec/impacket) |
-| `cheatsheets/`       | AD, pivoting, reverse-shells, C2 — via `cht <name>` |
 | `bin/addhost`        | Add/update an `/etc/hosts` entry |
 | `tmux/tmux.conf`     | `C-a` prefix, per-pane logging, `tun0` in status bar |
 | `tools/install-tools.sh` | Optional installer for missing tooling |
@@ -52,7 +51,6 @@ addhost 10.10.11.42 boxy.htb
 dl payload.exe win       # print a download one-liner for $LHOST (linux/win)
 tunnel                   # ligolo-ng / chisel pivot recipes with $LHOST filled in
 crack kerb.hash kerb     # hashcat by name (ntlm|asrep|kerb|net-ntlmv2|sha512crypt)
-cht active-directory     # open a cheatsheet (no arg = list them)
 b64 / ub64 / urlenc      # quick encoders
 note "found creds in config.php"   # timestamped line into the target's notes
 ```

@@ -234,14 +234,6 @@ mythic() {
     ( cd "$dir" && sudo ./mythic-cli "$@" )
 }
 
-# --- cht: open a repo cheatsheet in the pager ----------------------------------
-cht() {
-    local d="$RT_DOTFILES/cheatsheets"
-    if [ -z "$1" ]; then ls "$d" 2>/dev/null | sed 's/\.md$//'; return; fi
-    local f="$d/$1.md"; [ -f "$f" ] || f=$(ls "$d/$1"* 2>/dev/null | head -1)
-    [ -f "$f" ] && { command -v batcat >/dev/null && batcat "$f" || ${PAGER:-less} "$f"; } || echo "no cheatsheet: $1"
-}
-
 # --- note: append a timestamped line to the current target's notes -------------
 note() {
     local f="${TARGET_DIR:-.}/notes/README.md"

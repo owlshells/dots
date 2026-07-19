@@ -13,7 +13,7 @@
 #     kharon     C++,  Windows        (PIC, heavier feature set)
 #     poseidon   Go,   Linux/macOS
 #     medusa     Python, cross-plat
-#   See `cht c2`. Uncommon agent > default = less signatured.
+#   Uncommon agent > default = less signatured.
 set -uo pipefail
 
 MYTHIC_DIR="${MYTHIC_DIR:-$HOME/opt/Mythic}"
