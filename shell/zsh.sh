@@ -22,7 +22,13 @@ payload() {
               --preview="$prev" --preview-window=right:60%:wrap) || return
     [ -n "$f" ] || return
     print -r -- "$f"
-    command -v clip >/dev/null && print -rn -- "$f" | clip && echo "(path copied)"
+    # copy to clipboard directly (don't lean on the `clip` alias, which zsh
+    # bakes into the function body at parse time — detect the tool at runtime).
+    if command -v clip.exe >/dev/null 2>&1; then
+        print -rn -- "$f" | clip.exe && echo "(path copied)"
+    elif command -v xclip >/dev/null 2>&1; then
+        print -rn -- "$f" | xclip -selection clipboard && echo "(path copied)"
+    fi
 }
 
 # --- cmdlog: view/toggle the per-command engagement logger ---------------------
@@ -30,9 +36,9 @@ payload() {
 cmdlog() {
     case "${1:-}" in
         off) export RT_CMDLOG_OFF=1; echo "command logging: off";;
-        on)  unset RT_CMDLOG_OFF;    echo "command logging: on  -> ${RT_CMDLOG:-$OPS/cmdlog/$(date +%F).log}";;
+        on)  unset RT_CMDLOG_OFF;    echo "command logging: on  -> $(_rt_logpath)";;
         "")  if [ -n "$RT_CMDLOG_OFF" ]; then echo "command logging: off"
-             else echo "command logging: on  -> ${RT_CMDLOG:-$OPS/cmdlog/$(date +%F).log}"; fi;;
+             else echo "command logging: on  -> $(_rt_logpath)"; fi;;
         *)   export RT_CMDLOG="$1"; unset RT_CMDLOG_OFF; echo "command log -> $RT_CMDLOG";;
     esac
 }
