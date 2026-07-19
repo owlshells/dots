@@ -45,12 +45,13 @@ denv() {
     if [ -e ./.envrc ]; then echo "denv: ./.envrc already exists"; return 1; fi
     cat > ./.envrc <<'EOF'
 # direnv per-engagement env — auto-loads on cd into this dir.
-# Fill in what applies, then run:  direnv allow
-export DOMAIN=
-export DC=
-export U=
-export P=
-# export RHOST=
+# Uncomment and fill ONLY the lines you use, then run:  direnv allow
+# (left commented, they won't clobber DOMAIN/U/P you've set in the session)
+#export DOMAIN=corp.local
+#export DC=10.10.11.10
+#export U=user
+#export P='Password1'
+#export RHOST=10.10.11.42
 export RT_CMDLOG="$PWD/notes/commands.log"
 EOF
     echo "denv: wrote ./.envrc — edit it, then run: direnv allow"

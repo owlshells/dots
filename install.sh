@@ -38,7 +38,7 @@ hook_zsh() {
     cat >> "$rc" <<EOF
 
 $marker
-[ -r "\$HOME/dotfiles/shell/zshrc" ] && source "\$HOME/dotfiles/shell/zshrc"
+[ -r "$DOTFILES/shell/zshrc" ] && source "$DOTFILES/shell/zshrc"
 # <<< red-team dotfiles <<<
 EOF
     echo "hook  appended red-team block to ~/.zshrc (backup in $BACKUP/)"

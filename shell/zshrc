@@ -3,7 +3,9 @@
 # Kali's stock ~/.zshrc keeps ownership of prompt, completion, syntax-
 # highlighting and autosuggestions; this file only adds the engagement layer.
 
-RT_DOTFILES="${RT_DOTFILES:-$HOME/dotfiles}"
+# Resolve the repo root from this file's own path (shell/zshrc -> repo root),
+# so the whole zsh layer works regardless of where the repo is cloned.
+RT_DOTFILES="${RT_DOTFILES:-${${(%):-%x}:A:h:h}}"
 
 # --- shared modules (POSIX-clean; sourced by both bash and zsh) ---
 for _f in exports aliases functions ad; do
