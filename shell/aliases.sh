@@ -1,4 +1,4 @@
-# ~/dotfiles/shell/aliases.sh — aliases for engagement work
+# ~/dots/shell/aliases.sh — aliases for engagement work
 
 # --- Navigation / listing ---
 alias ..='cd ..'

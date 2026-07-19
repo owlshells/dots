@@ -1,4 +1,4 @@
-# ~/dotfiles/shell/zsh.sh — zsh-only engagement helpers.
+# ~/dots/shell/zsh.sh — zsh-only engagement helpers.
 # Loaded from shell/zshrc after the shared modules. Uses zsh features
 # (array ${#..}, ${..:h}) so it is not sourced under bash.
 

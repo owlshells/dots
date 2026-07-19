@@ -1,4 +1,4 @@
-# ~/dotfiles/shell/exports.sh — environment for engagement work
+# ~/dots/shell/exports.sh — environment for engagement work
 
 # --- History: keep more, timestamped, de-duped ---
 export HISTSIZE=100000

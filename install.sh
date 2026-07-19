@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — symlink dotfiles into place. Idempotent; backs up anything real.
+# install.sh — symlink dots into place. Idempotent; backs up anything real.
 set -euo pipefail
 
 DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

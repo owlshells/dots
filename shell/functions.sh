@@ -1,4 +1,4 @@
-# ~/dotfiles/shell/functions.sh — engagement workflow helpers
+# ~/dots/shell/functions.sh — engagement workflow helpers
 #
 # For use on authorized engagements, CTFs, and lab work only. These are
 # convenience wrappers around standard tooling — nothing here targets anything

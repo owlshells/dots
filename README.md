@@ -1,4 +1,4 @@
-# dotfiles
+# dots
 
 Red-team / pentest shell setup for Kali. Modular, symlink-based, and
 non-destructive. Works under **both bash and zsh**:
@@ -16,15 +16,15 @@ run in either shell; zsh additionally gets per-command logging, fzf, and direnv.
 ## Install
 
 ```bash
-git clone git@github.com:0w15h3115/dotfiles.git ~/dotfiles
-~/dotfiles/install.sh          # symlinks ~/.bash_aliases and ~/.tmux.conf (backs up originals)
+git clone git@github.com:0w15h3115/dots.git ~/dots
+~/dots/install.sh          # symlinks ~/.bash_aliases and ~/.tmux.conf (backs up originals)
 source ~/.bashrc
 ```
 
 Optional — install the CLI tools referenced here that aren't already present:
 
 ```bash
-~/dotfiles/tools/install-tools.sh
+~/dots/tools/install-tools.sh
 ```
 
 ## Layout

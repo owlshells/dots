@@ -1,4 +1,4 @@
-# ~/dotfiles/shell/ad.sh — Active Directory helpers (netexec / impacket)
+# ~/dots/shell/ad.sh — Active Directory helpers (netexec / impacket)
 #
 # Authorized engagements, CTFs, and labs only. Thin wrappers around standard
 # tooling; every function acts only on the target/creds you pass it.

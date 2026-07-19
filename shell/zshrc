@@ -1,4 +1,4 @@
-# ~/dotfiles/shell/zshrc — red-team shell entrypoint for zsh.
+# ~/dots/shell/zshrc — red-team shell entrypoint for zsh.
 # Sourced from ~/.zshrc via a guarded block (install.sh adds it).
 # Kali's stock ~/.zshrc keeps ownership of prompt, completion, syntax-
 # highlighting and autosuggestions; this file only adds the engagement layer.
