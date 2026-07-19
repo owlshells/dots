@@ -218,6 +218,21 @@ crack() {
     hashcat -m "$m" "$f" "$wl"
 }
 
+# --- mythic: drive mythic-cli from anywhere ------------------------------------
+# Usage: mythic <start|stop|status|...>   (wraps sudo ./mythic-cli in $MYTHIC_DIR)
+#        mythic creds   -> print the admin login
+mythic() {
+    local dir="${MYTHIC_DIR:-$HOME/opt/Mythic}"
+    [ -x "$dir/mythic-cli" ] || { echo "mythic-cli not built — run: $RT_DOTFILES/tools/mythic-setup.sh"; return 1; }
+    if [ "$1" = "creds" ]; then
+        echo "url:  https://127.0.0.1:7443"
+        echo "user: mythic_admin"
+        echo "pass: $(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$dir/.env" | cut -d= -f2-)"
+        return
+    fi
+    ( cd "$dir" && sudo ./mythic-cli "$@" )
+}
+
 # --- cht: open a repo cheatsheet in the pager ----------------------------------
 cht() {
     local d="$RT_DOTFILES/cheatsheets"

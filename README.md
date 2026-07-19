@@ -34,6 +34,7 @@ Optional — install the CLI tools referenced here that aren't already present:
 | `bin/addhost`        | Add/update an `/etc/hosts` entry |
 | `tmux/tmux.conf`     | `C-a` prefix, per-pane logging, `tun0` in status bar |
 | `tools/install-tools.sh` | Optional installer for missing tooling |
+| `tools/mythic-setup.sh`  | One-shot Mythic C2 bootstrap (Docker → build → start) |
 
 ## Workflow helpers
 
