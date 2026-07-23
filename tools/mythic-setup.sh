@@ -2,7 +2,8 @@
 # mythic-setup.sh — stand up Mythic C2 (Docker) end to end.
 #
 # Authorized red-team engagements only.
-# Run as your normal user; it calls sudo for the privileged bits.
+# Run as your normal user. sudo is used ONLY to install/start the Docker daemon;
+# every mythic-cli call runs as you, which requires docker group membership.
 #
 # Usage: mythic-setup.sh [agent] [profile]
 #   defaults: agent=thanatos (Rust, Windows+Linux), profile=http
@@ -47,27 +48,56 @@ if ! command -v docker >/dev/null; then
 fi
 
 # Ensure the daemon is up (systemd on most cloud instances; WSL2 has none, so
-# fall back to service, then a raw dockerd).
-if ! sudo docker info >/dev/null 2>&1; then
-    say "starting docker daemon"
+# fall back to service, then a raw dockerd). Starting the daemon is the one
+# genuinely privileged step, so it keeps sudo.
+docker_up() { docker info >/dev/null 2>&1 || sudo docker info >/dev/null 2>&1; }
+if ! docker_up; then
+    say "starting docker daemon (sudo)"
     sudo systemctl start docker 2>/dev/null \
         || sudo service docker start 2>/dev/null \
         || sudo dockerd >/tmp/dockerd.log 2>&1 &
     sleep 5
-    sudo docker info >/dev/null 2>&1 || die "docker daemon not reachable (check /tmp/dockerd.log)"
+    docker_up || die "docker daemon not reachable (check /tmp/dockerd.log)"
+fi
+
+# 2b. From here on mythic-cli runs as *you*, never under sudo. Running it as
+# root leaves root-owned docker-compose.yml / InstalledServices behind, and a
+# later non-sudo run then half-fails in a confusing way: payload files copy
+# fine, but the service never gets registered into docker-compose (you get a
+# wall of "Failed to update config: ... permission denied" and the agent
+# silently never starts). Needs the docker group.
+if ! docker info >/dev/null 2>&1; then
+    cat >&2 <<EOF
+[-] cannot reach the docker socket as $(id -un).
+    mythic-cli must run as your user (not sudo), so join the docker group:
+
+        sudo usermod -aG docker $(id -un)
+        newgrp docker        # or open a new shell — group is only picked up on login
+
+    already root-owned from an earlier sudo run? take it back first — but do NOT
+    blanket-chown the container data dirs: postgres runs as uid 70 inside its
+    container, and handing its data dir to your uid kills the DB with
+    "could not open file global/pg_filenode.map: Permission denied".
+        sudo chown -R $(id -un):$(id -gn) "$MYTHIC_DIR"
+        sudo chown -R 70:70 "$MYTHIC_DIR/postgres-docker/database"   # give postgres its data back
+
+    note: docker group membership is root-equivalent (you can mount / into a
+    container). Fine on a single-user lab box; don't hand it out on a shared host.
+EOF
+    exit 1
 fi
 
 # 3. Build mythic-cli
 if [ ! -x ./mythic-cli ]; then
-    say "building mythic-cli (sudo make)"
-    sudo make || die "make failed"
+    say "building mythic-cli"
+    make || die "make failed"
 fi
 
 # 4. Install agent + C2 profile (idempotent-ish; re-install is harmless)
 say "installing agent: $AGENT"
-sudo ./mythic-cli install github "https://github.com/MythicAgents/$AGENT"   || die "agent install failed"
+./mythic-cli install github "https://github.com/MythicAgents/$AGENT"   || die "agent install failed"
 say "installing C2 profile: $PROFILE"
-sudo ./mythic-cli install github "https://github.com/MythicC2Profiles/$PROFILE" || die "profile install failed"
+./mythic-cli install github "https://github.com/MythicC2Profiles/$PROFILE" || die "profile install failed"
 
 ENVF="$MYTHIC_DIR/.env"
 
@@ -79,16 +109,16 @@ ENVF="$MYTHIC_DIR/.env"
 #   - cloud: SSH tunnel   ssh -L 7443:127.0.0.1:7443 user@teamserver
 #   - WSL2:  the Windows browser hits https://127.0.0.1:7443 directly
 say "binding admin UI to localhost (NGINX_BIND_LOCALHOST_ONLY=true)"
-sudo test -f "$ENVF" || sudo ./mythic-cli config get DEBUG_LEVEL >/dev/null 2>&1 || true
-sudo ./mythic-cli config set NGINX_BIND_LOCALHOST_ONLY true >/dev/null 2>&1 || true
+test -f "$ENVF" || ./mythic-cli config get DEBUG_LEVEL >/dev/null 2>&1 || true
+./mythic-cli config set NGINX_BIND_LOCALHOST_ONLY true >/dev/null 2>&1 || true
 
 # 5. Start — Mythic generates a random admin password into .env (the standard flow)
 say "starting Mythic"
-sudo ./mythic-cli start || die "start failed"
+./mythic-cli start || die "start failed"
 
 # 5b. Lock down .env: it holds live Postgres/RabbitMQ/JWT secrets in plaintext.
 # Default perms can be world-readable; restrict to owner only.
-sudo chmod 600 "$ENVF" 2>/dev/null || true
+chmod 600 "$ENVF" 2>/dev/null || true
 
 # 6. Report creds (read the password Mythic generated; retrieve later with `mythic creds`)
 say "Mythic is up"
@@ -97,12 +127,13 @@ cat <<EOF
   UI:       https://127.0.0.1:7443   (self-signed cert — expect a warning; localhost only)
             remote box? tunnel it:  ssh -L 7443:127.0.0.1:7443 user@<teamserver>
   user:     mythic_admin
-  password: $(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$ENVF" 2>/dev/null | cut -d= -f2- || echo '(mythic creds)')
+  password: $(grep -E '^MYTHIC_ADMIN_PASSWORD=' "$ENVF" 2>/dev/null | cut -d= -f2- || echo '(mythic creds)')
 
   -> copy the password into your manager now if you want a backup; .env (0600)
      is the source of truth and `mythic creds` reads it on demand.
 
-  status:   sudo ./mythic-cli status      (or: mythic status  — see the shell helper)
-  stop:     sudo ./mythic-cli stop
+  status:   ./mythic-cli status           (or: mythic status  — see the shell helper)
+  stop:     ./mythic-cli stop
+  note:     run mythic-cli as your user, never sudo (see comment in this script)
   agent:    $AGENT   profile: $PROFILE
 EOF
