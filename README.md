@@ -25,7 +25,7 @@ Optional:
 ```bash
 ~/dots/tools/install-tools.sh      # the CLI tools referenced here
 ~/dots/tools/backfill-index.sh     # seed recall from command logs you already have
-~/dots/tools/selftest.zsh          # 129 checks, no network or engagement needed
+~/dots/tools/selftest.zsh          # 142 checks, no network or engagement needed
 ~/dots/tools/scrub-logs.sh         # retro-redact secrets from logs already on disk
 ```
 
@@ -156,7 +156,8 @@ awscli needs nothing; Kali's package already ships `_aws`.
 ### The command library — `^X^S`
 
 `^X^S` opens [arsenal-ng](https://github.com/halilkirazkaya/arsenal-ng), Kali's
-packaged command library: 200+ cheat sheets including a whole impacket tree,
+packaged command library: 2830 cheats across 238 files including a whole
+impacket tree,
 `{{placeholder}}` templating with defaults (`{{lport|4444}}`), a persistent
 variable store, and command injection straight into the terminal.
 
@@ -165,18 +166,23 @@ It used the same `{{placeholder}}` grammar with a third of the content, and
 maintaining it meant maintaining a worse copy of something that arrives through
 `apt`. The old snippets are in git history if they are ever wanted.
 
-Set its variables once from inside the TUI and every sheet fills in:
+**Its variables are seeded from your session.** `^X^S` writes
+`~/.config/arsenal-ng/variables.json` before launching, so `target 10.10.11.42
+boxy` means every `{{target}}` across 2830 cheats is already filled:
 
-```
-set target=10.10.11.42
-set domain=corp.local
-set username=svc_sql
-```
+| session | arsenal |
+|---|---|
+| `$RHOST`  | `{{target}}`, `{{target_ip}}` |
+| `$DOMAIN` | `{{domain}}` |
+| `$U`      | `{{username}}`, `{{user}}` |
+| `$DC`     | `{{dc_ip}}` |
+| `$LHOST`  | `{{lhost}}` |
 
-Not yet wired: seeding those from the session's `$RHOST`/`$DOMAIN`/`$U` the way
-the old snippets did. arsenal-ng has no command-line interface — it is TUI-only,
-with its variable store under `internal/state` — so that bridge needs its file
-format confirmed from one interactive run first.
+`$P` is deliberately **not** written. Everything else there is context; a
+password is a credential, and persisting it to a file that outlives the session
+is the habit the redaction work exists to break. Opt in with
+`RT_ARSENAL_SYNC_PASSWORD=1`. The store is merged rather than overwritten, so
+variables you set inside the TUI survive, and it is written `0600`.
 
 Install it with `sudo apt install arsenal-ng`; both deploy scripts now include
 it. `^X^S` says so if it is missing.

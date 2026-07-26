@@ -307,6 +307,47 @@ ok "$(grep -c SuperSecret123 $RT_CMD_INDEX)" "0" "secret never reaches the index
 has "$(cat $RT_CMD_INDEX)" '{{redacted}}' "the placeholder is what lands"
 ok "${_rt_recall_mem[(I)*SuperSecret123*]}" "0" "and never reaches the ghost-text corpus"
 
+# ==============================================================================
+# arsenal-ng variable bridge
+# ==============================================================================
+typeset -g RT_ARSENAL_VARS=$OPS/arsenal-vars.json
+source $RT_DOTFILES/shell/zsh/pickers.zsh
+
+_vars() { python3 -c 'import json,sys;print(json.dumps(json.load(open(sys.argv[1])),sort_keys=True))' "$RT_ARSENAL_VARS" 2>/dev/null }
+
+t "arsenal bridge: session state becomes arsenal variables"
+rm -f $RT_ARSENAL_VARS
+RHOST=10.10.11.42 DOMAIN=corp.local U=svc_sql DC=10.10.11.10 LHOST=10.10.14.7 P='Passw0rd!' \
+    _rt_arsenal_sync
+typeset -g _v=$(_vars)
+has "$_v" '"target": "10.10.11.42"'    "RHOST becomes {{target}}"
+has "$_v" '"target_ip": "10.10.11.42"' "and {{target_ip}}"
+has "$_v" '"domain": "corp.local"'     "DOMAIN becomes {{domain}}"
+has "$_v" '"username": "svc_sql"'      "U becomes {{username}}"
+has "$_v" '"dc_ip": "10.10.11.10"'     "DC becomes {{dc_ip}}"
+has "$_v" '"lhost": "10.10.14.7"'      "LHOST becomes {{lhost}}"
+ok  "$(grep -c password $RT_ARSENAL_VARS)" "0" \
+    "the password is NOT persisted by default"
+ok  "$(stat -c %a $RT_ARSENAL_VARS)" "600" "written 0600"
+
+t "arsenal bridge: opt-in password, and merge safety"
+RHOST=10.10.11.42 U=svc_sql P='Passw0rd!' RT_ARSENAL_SYNC_PASSWORD=1 _rt_arsenal_sync
+has "$(_vars)" '"password": "Passw0rd!"' "RT_ARSENAL_SYNC_PASSWORD=1 includes it"
+# A variable set by hand inside the TUI must survive the next sync.
+python3 -c 'import json,sys;p=sys.argv[1];d=json.load(open(p));d["wordlist"]="/usr/share/seclists/x.txt";json.dump(d,open(p,"w"))' $RT_ARSENAL_VARS
+RHOST=10.10.12.99 U=svc_sql _rt_arsenal_sync
+has "$(_vars)" '"wordlist": "/usr/share/seclists/x.txt"' "variables set in the TUI survive a re-sync"
+has "$(_vars)" '"target": "10.10.12.99"'                 "and the new target lands"
+
+t "arsenal bridge: degrades quietly"
+rm -f $RT_ARSENAL_VARS
+RHOST="" DOMAIN="" U="" DC="" LHOST="" _rt_arsenal_sync
+[[ -f $RT_ARSENAL_VARS ]] && ok "file" "no file" "no session state writes no file" \
+                          || ok "no file" "no file" "no session state writes no file"
+print -r -- 'not json at all' > $RT_ARSENAL_VARS
+RHOST=10.10.11.42 _rt_arsenal_sync
+has "$(_vars)" '"target": "10.10.11.42"' "a corrupt store is replaced, not fatal"
+
 print -r -- ""
 if (( _t_fail )); then print -r -- "FAILED  ($_t_run checks)"; else print -r -- "all pass ($_t_run checks)"; fi
 exit $_t_fail
