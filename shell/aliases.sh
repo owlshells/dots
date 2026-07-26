@@ -22,7 +22,6 @@ alias listening='ss -tlpn'
 alias serve-here='python3 -m http.server'      # quick HTTP server (see `serve` fn for LHOST url)
 
 # --- Tooling shortcuts ---
-alias nx='nxc'                                 # netexec
 alias msf='msfconsole -q'
 alias vpnip='ip -4 -o addr show tun0 2>/dev/null | awk "{print \$4}" | cut -d/ -f1'
 

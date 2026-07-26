@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# rt-host-harvest — pull hostnames out of nmap output into the host index.
+#
+# Scanning a box should be what makes its names tab-completable, with no
+# follow-up command. shell/zsh/hosts.zsh calls this from a precmd hook whenever
+# the scans directory has changed.
+#
+# Reads nmap normal output (-oN), emits "ip<TAB>name", merges into the index.
+# Deliberately matches only high-signal fields — a loose hostname regex over
+# whole scan files produces mostly rubbish.
+#
+# Usage: rt-host-harvest <file.nmap>...
+set -euo pipefail
+
+idx="${RT_HOSTS_INDEX:-${OPS:-$HOME/ops}/.hosts-index}"
+[ "$#" -gt 0 ] || exit 0
+mkdir -p "$(dirname "$idx")"
+
+harvest() {
+    awk '
+    function emit(h) {
+        if (cur == "" || h == "")            return
+        gsub(/^[.*]+|[.,;)]+$/, "", h)
+        if (h ~ /^[0-9.]+$/)                 return    # an address, not a name
+        if (length(h) < 2 || h ~ /^-/)       return
+        if (h ~ /^(localhost|_)/)            return
+        if (seen[cur "\t" tolower(h)]++)     return
+        print cur "\t" tolower(h)
+    }
+    # Patterns arrive as strings, not regex constants: awk cannot pass a regex
+    # constant as a function parameter (it evaluates to a boolean instead).
+    # Loops rather than matching once: a subjectAltName line carries several
+    # names, and those extra vhosts are usually the interesting ones.
+    function grab(re, strip,   h, s) {
+        s = $0
+        while (match(s, re)) {
+            h = substr(s, RSTART, RLENGTH)
+            s = substr(s, RSTART + RLENGTH)
+            sub(strip, "", h)
+            emit(h)
+        }
+    }
+    /^Nmap scan report for / {
+        s = substr($0, 22)
+        if (match(s, /\([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+\)$/)) {
+            cur  = substr(s, RSTART + 1, RLENGTH - 2)
+            name = substr(s, 1, RSTART - 2)
+        } else { cur = s; name = "" }
+        if (cur !~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/) { cur = ""; next }
+        emit(name)
+        next
+    }
+    cur != "" {
+        grab("redirect to https?://[A-Za-z0-9._-]+", ".*//")
+        grab("commonName=[A-Za-z0-9._*-]+",          "^commonName=")
+        grab("DNS:[A-Za-z0-9._*-]+",                 "^DNS:")
+        grab("FQDN: [A-Za-z0-9._-]+",                "^FQDN: ")
+        grab("Host: [A-Za-z0-9._-]+",                "^Host: ")
+        grab("[Dd]omain: [A-Za-z0-9._-]+",           "^[Dd]omain: ")
+    }' "$@"
+}
+
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+{ [ -r "$idx" ] && cat "$idx"; harvest "$@"; } | grep -v '^[[:space:]]*$' | sort -u > "$tmp"
+cat "$tmp" > "$idx"

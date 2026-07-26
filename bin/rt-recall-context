@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# rt-recall-context — the commands you ran either side of a ledger entry.
+#
+# This is the point of the recall picker. One command out of context is a line
+# you could have found in history; the six either side of it are the approach
+# you took last time, which is the thing you actually want back.
+#
+# Usage: rt-recall-context <line-number-in-index> [span]
+set -euo pipefail
+
+line="${1:-0}"
+span="${2:-6}"
+idx="${RT_CMD_INDEX:-${OPS:-$HOME/ops}/.cmd-index}"
+[ -r "$idx" ] || exit 0
+
+awk -F'\t' -v L="$line" -v S="$span" -v home="$HOME" '
+NR >= L - S && NR <= L + S {
+    dir = $2
+    if (index(dir, home) == 1) dir = "~" substr(dir, length(home) + 1)
+    if (NR == L) printf "\033[36m▸ %s  %s\033[0m\n", substr($1, 6, 11), $3
+    else         printf "  \033[38;5;242m%s\033[0m  %s\n", substr($1, 6, 11), $3
+}' "$idx"

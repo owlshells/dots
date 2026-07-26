@@ -8,7 +8,7 @@
 RT_DOTFILES="${RT_DOTFILES:-${${(%):-%x}:A:h:h}}"
 
 # --- shared modules (POSIX-clean; sourced by both bash and zsh) ---
-for _f in exports aliases functions ad; do
+for _f in exports aliases functions; do
     [ -r "$RT_DOTFILES/shell/$_f.sh" ] && source "$RT_DOTFILES/shell/$_f.sh"
 done
 unset _f
@@ -41,6 +41,10 @@ _rt_cmdlog() {
     local log; log="$(_rt_logpath)"
     mkdir -p "${log:h}" 2>/dev/null || return
     printf '%s  [%s]  %s\n' "$(date '+%F %T')" "${PWD/#$HOME/~}" "$1" >> "$log"
+    # Same event, second consumer: a machine-readable index that shell/zsh/
+    # recall.zsh reads back as ghost text and as the ^X^R picker. The human log
+    # above stays exactly as it was — this is additive.
+    (( $+functions[_rt_index_add] )) && _rt_index_add "$1"
 }
 add-zsh-hook preexec _rt_cmdlog
 
@@ -68,3 +72,13 @@ command -v direnv >/dev/null && eval "$(direnv hook zsh)"
 
 # --- zsh-only helpers (payload lookup, cmdlog toggle, .envrc template) ---
 [ -r "$RT_DOTFILES/shell/zsh.sh" ] && source "$RT_DOTFILES/shell/zsh.sh"
+
+# --- the ambient layer: things that work without being invoked ---
+# Loaded last, after fzf and autosuggestions, because guard.zsh delegates to the
+# accept-line widget those install and recall.zsh registers an autosuggestion
+# strategy. Alphabetical order is load order, and context.zsh must precede
+# guard.zsh — the guard reuses its cached view of the interfaces.
+for _f in "$RT_DOTFILES"/shell/zsh/*.zsh(N); do
+    source "$_f"
+done
+unset _f

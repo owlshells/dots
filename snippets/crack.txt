@@ -1,0 +1,38 @@
+# Cracking. Modes are spelled out so the number is never the thing you remember.
+# $WORDLISTS/$SECLISTS are exported by shell/exports.sh.
+
+# hashcat · NTLM (mode 1000)
+hashcat -m 1000 {{FILE}} $WORDLISTS/rockyou.txt
+
+# hashcat · NTLM with a rule set
+hashcat -m 1000 {{FILE}} $WORDLISTS/rockyou.txt -r /usr/share/hashcat/rules/best64.rule
+
+# hashcat · AS-REP roast (mode 18200)
+hashcat -m 18200 {{FILE}} $WORDLISTS/rockyou.txt
+
+# hashcat · Kerberoast TGS-REP (mode 13100)
+hashcat -m 13100 {{FILE}} $WORDLISTS/rockyou.txt
+
+# hashcat · NetNTLMv2 from responder (mode 5600)
+hashcat -m 5600 {{FILE}} $WORDLISTS/rockyou.txt
+
+# hashcat · sha512crypt, /etc/shadow (mode 1800)
+hashcat -m 1800 {{FILE}} $WORDLISTS/rockyou.txt
+
+# hashcat · bcrypt (mode 3200 — slow, use a small list)
+hashcat -m 3200 {{FILE}} $WORDLISTS/rockyou.txt
+
+# hashcat · show what has already cracked
+hashcat -m 1000 {{FILE}} --show
+
+# john · let it identify the format
+john --wordlist=$WORDLISTS/rockyou.txt {{FILE}}
+
+# john · zip / ssh key / keepass, via the *2john helpers
+zip2john {{FILE}} > hash.txt && john --wordlist=$WORDLISTS/rockyou.txt hash.txt
+
+# ssh2john for a passphrase-protected key
+ssh2john id_rsa > hash.txt && john --wordlist=$WORDLISTS/rockyou.txt hash.txt
+
+# identify an unknown hash
+hashid '{{HASH}}'

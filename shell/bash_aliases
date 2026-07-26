@@ -4,7 +4,7 @@
 
 RT_DOTFILES="${RT_DOTFILES:-$HOME/dots}"
 
-for _f in exports aliases functions ad; do
+for _f in exports aliases functions; do
     [ -r "$RT_DOTFILES/shell/$_f.sh" ] && . "$RT_DOTFILES/shell/$_f.sh"
 done
 unset _f

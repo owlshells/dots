@@ -1,0 +1,26 @@
+# Nmap 7.94 scan initiated Sun Jul 20 09:01:00 2026 as: nmap -sCV -oN services.nmap 10.10.11.42
+Nmap scan report for boxy.htb (10.10.11.42)
+Host is up (0.021s latency).
+
+PORT     STATE SERVICE       VERSION
+80/tcp   open  http          Apache httpd 2.4.52
+|_http-title: Did not follow redirect to http://admin.boxy.htb/
+|_http-server-header: Apache/2.4.52 (Ubuntu)
+443/tcp  open  ssl/http      Apache httpd 2.4.52
+| ssl-cert: Subject: commonName=shop.boxy.htb/organizationName=Boxy Ltd
+| Subject Alternative Name: DNS:shop.boxy.htb, DNS:api.boxy.htb
+|_Not valid before: 2026-01-01T00:00:00
+445/tcp  open  microsoft-ds?
+Service Info: Host: BOXY01; OS: Linux; CPE: cpe:/o:linux:linux_kernel
+
+Nmap scan report for 10.10.11.10
+Host is up (0.019s latency).
+PORT    STATE SERVICE
+88/tcp  open  kerberos-sec
+389/tcp open  ldap          Microsoft Windows Active Directory LDAP
+| ssl-cert: Subject: commonName=dc01.corp.local
+|_ssl-date: 2026-07-20T09:02:11+00:00
+| smb-os-discovery:
+|   OS: Windows Server 2019
+|   FQDN: dc01.corp.local
+|_  Domain: corp.local

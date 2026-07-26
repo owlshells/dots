@@ -1,15 +1,14 @@
 # dots
 
 Red-team / pentest shell setup for Kali. Modular, symlink-based, and
-non-destructive. Works under **both bash and zsh**:
+non-destructive.
 
-- **bash** hooks in through `~/.bash_aliases` (which Kali's stock `.bashrc`
-  already sources).
-- **zsh** appends one guarded `source` line to `~/.zshrc` (Kali keeps its
-  prompt, completion, syntax-highlighting and autosuggestions; we load after).
-
-The shared modules (`exports`/`aliases`/`functions`/`ad`) are POSIX-clean and
-run in either shell; zsh additionally gets per-command logging, fzf, and direnv.
+The design rule is that this layer should **work without being invoked**. A
+shorter name for a command is a second vocabulary to memorise and it buys
+nothing; the shell knowing which box you are on, refusing to fire at something
+out of scope, and completing from what you actually ran last time buys a lot.
+So the helpers here are either scaffolding that does real work, or ambient
+behaviour you never type.
 
 > For authorized engagements, CTFs, and lab work only.
 
@@ -18,96 +17,158 @@ run in either shell; zsh additionally gets per-command logging, fzf, and direnv.
 ```bash
 git clone git@github.com:0w15h3115/dots.git ~/dots
 ~/dots/install.sh          # symlinks ~/.bash_aliases and ~/.tmux.conf (backs up originals)
-source ~/.bashrc
+exec zsh
 ```
 
-Optional — install the CLI tools referenced here that aren't already present:
+Optional:
 
 ```bash
-~/dots/tools/install-tools.sh
+~/dots/tools/install-tools.sh      # the CLI tools referenced here
+~/dots/tools/backfill-index.sh     # seed recall from command logs you already have
+~/dots/tools/selftest.zsh          # 105 checks, no network or engagement needed
 ```
 
-## Layout
+**bash** hooks in through `~/.bash_aliases`; **zsh** appends one guarded
+`source` line to `~/.zshrc`. Kali keeps its prompt, completion, syntax
+highlighting and autosuggestions — this loads after them and delegates to them.
+The shared modules run in either shell; **the ambient layer is zsh-only**.
 
-| Path | What |
-|------|------|
-| `shell/bash_aliases` | bash loader — symlinked to `~/.bash_aliases`, sources the rest |
-| `shell/zshrc`        | zsh loader — sourced from `~/.zshrc`; history, preexec logging, fzf, direnv |
-| `shell/zsh.sh`       | zsh-only helpers — `payload`, `cmdlog`, `denv` |
-| `shell/exports.sh`   | History, PATH, `$WORDLISTS`/`$SECLISTS`, `$OPS` |
-| `shell/aliases.sh`   | `ports`, `myip`, `vpnip`, clipboard, listing, tool shortcuts |
-| `shell/functions.sh` | Engagement workflow helpers (below) |
-| `shell/ad.sh`        | Active Directory helpers (netexec/impacket) |
-| `bin/addhost`        | Add/update an `/etc/hosts` entry |
-| `tmux/tmux.conf`     | `C-a` prefix, per-pane logging, `tun0` in status bar |
-| `tools/install-tools.sh` | Optional installer for missing tooling |
-| `tools/mythic-setup.sh`  | One-shot Mythic C2 bootstrap (Docker → build → start) |
+## The ambient layer
 
-## Workflow helpers
+Nothing below is a command you run.
+
+### The context bar
+
+The right prompt carries whatever is loaded, and is empty when nothing is:
+
+```
+~/ops/boxy/scans            boxy 10.10.11.42 · corp.local/svc_sql · aws:stonepass · tun0
+```
+
+Target, credentials, AWS profile, VPN interface, and the ledger state. It is
+uniformly dim on purpose — colour appears only when something wants attention
+(tunnel down, logging paused), so a coloured prompt always means something.
+
+### The scope guard
+
+Every address on the line is checked before the line runs. Out of scope, or
+private and unroutable with no tunnel up, and the first Enter warns instead of
+executing:
+
+```
+❯ nmap -p- 10.10.99.7
+out of scope: 10.10.99.7   (~/ops/boxy/scope.txt)
+press enter again to run anyway
+```
+
+Pressing Enter again on the unchanged line runs it. `target` seeds `scope.txt`
+with the box you named, so the guard arms itself; widen it with
+`scope add 10.10.11.0/24`. **With no scope file the guard is inert and silent** —
+it never speaks until it has something to enforce, and it ignores public
+addresses unless your scope actually reaches into that space, so ordinary
+traffic to mirrors and DNS never cries wolf.
+
+### Recall — `^X^R`
+
+The preexec ledger has always recorded every command with its timestamp and
+directory. Now it is read back. `^X^R` searches all of it, and the preview shows
+the commands **either side** of the hit — the approach you took, not one line:
+
+```
+  07-20 09:01  nmap -Pn -p- 10.10.11.42
+▸ 07-20 09:02  nxc smb 10.10.11.42 -u guest -p ""
+  07-20 09:03  impacket-GetNPUsers corp/:@10.10.11.10 -no-pass
+```
+
+The same ledger feeds zsh-autosuggestions, so ghost text completes from past
+engagements rather than only this session.
+
+Ranking never uses tool names — a denylist of "noise commands" is stale the day
+you install something new. Entries are judged on shape (does it take arguments)
+and place (was it run under `$OPS`), which holds for tools that do not exist
+yet. `^A` in the picker drops the filter entirely.
+
+### Completion that follows your scans
+
+Hostnames are harvested out of nmap output as it lands — the report line, http
+redirects, TLS commonName and SANs, `smb-os-discovery` — and published through
+zsh's standard hosts source. `ssh`, `scp`, `ping`, `curl` and friends pick them
+up with no per-tool configuration. When a scan finds names `/etc/hosts` lacks,
+one line says so and hands you the `addhost` command.
+
+Two completers are added by hand, for tools that ship none:
+
+- **netexec** — protocols and the common flags.
+- **impacket** — the `domain/user:password@target` grammar every script shares,
+  assembled from `$DOMAIN`/`$U`/`$P`/`$RHOST`. One TAB instead of retyping the
+  most fat-fingered string in AD work.
+
+awscli needs nothing; Kali's package already ships `_aws`.
+
+### Snippets — `^X^S`
+
+Search ~70 real commands and land one **in your buffer**, with `{{LHOST}}`,
+`{{RHOST}}`, `{{DOMAIN}}`, `{{U}}`, `{{P}}`, `{{PORT}}` filled from the session.
+Unset variables keep their `{{PLACEHOLDER}}` so the hole is visible. Nothing
+runs until you press Enter, so you read and edit it first — and the ledger
+records the command rather than a wrapper around it.
+
+Categories: `revshell`, `ad`, `tunnel`, `transfer`, `tty`, `crack`. Add your own
+as `snippets/<name>.txt`, one `# label` line per command.
+
+Keybinds all live under `^X`: `^X^R` recall, `^X^S` snippets, `^X^P` payload
+paths. (`^P` and space are already claimed by Kali's config.)
+
+## Commands that do real work
 
 ```bash
 lhost                    # your attack IP (prefers tun0) -> $LHOST
-target 10.10.11.42 boxy  # sets $RHOST, scaffolds ~/ops/boxy/{scans,loot,...}, cds in
+target 10.10.11.42 boxy  # $RHOST, ~/ops/boxy/{scans,loot,...}, scope.txt, cd
 scan                     # staged nmap (all ports -> service scan) into ./scans
 fuzz http://boxy/FUZZ    # ffuf with a sane default wordlist
 serve 8000               # HTTP server in cwd, prints the http://LHOST:port url
 smbserve share .         # impacket SMB share
 listen 4444              # reverse-shell catcher (penelope > rlwrap nc > nc)
-revshell 4444 bash       # print a reverse-shell one-liner for $LHOST (or: all)
-upgrade-shell            # print the TTY-upgrade sequence
 addhost 10.10.11.42 boxy.htb
-dl payload.exe win       # print a download one-liner for $LHOST (linux/win)
-tunnel                   # ligolo-ng / chisel pivot recipes with $LHOST filled in
-crack kerb.hash kerb     # hashcat by name (ntlm|asrep|kerb|net-ntlmv2|sha512crypt)
-b64 / ub64 / urlenc      # quick encoders
-note "found creds in config.php"   # timestamped line into the target's notes
-```
-
-### Active Directory (`shell/ad.sh`)
-
-```bash
-export DOMAIN=corp.local DC=10.10.11.10 U=user P='pass'   # adset shows current
-nxc-null $DC             # null/guest SMB enum
-nxc-spray $DC users.txt 'Spring2026!'   # one password, lockout-aware
-asrep $DC $DOMAIN users.txt   # AS-REP roast -> hashcat -m 18200
-kerberoast               # SPN roast (needs creds) -> hashcat -m 13100
-bhpy                     # BloodHound collection -> zip
-secretsdump $RHOST       # dump secrets with creds
+scope / scope add        # what the guard enforces
+note "creds in config.php"     # timestamped line into the box's notes
+b64 / ub64 / urlenc      # encoders
+mythic start|status      # drive mythic-cli from anywhere
+cmdlog / cmdlog off      # ledger status; pause before typing a password
+payload smb              # fzf SecLists/PayloadsAllTheThings with preview
+denv                     # direnv .envrc template for per-engagement creds
 ```
 
 `target` creates a per-box tree under `$OPS` (default `~/ops`). `~/ops` and
-`*.log` are gitignored so loot and evidence never get committed.
+`*.log` are gitignored, so loot and evidence are never committed.
 
-### zsh extras
+## Layout
 
-These load only under zsh (bash is unaffected):
+| Path | What |
+|------|------|
+| `shell/zshrc`, `shell/bash_aliases` | loaders |
+| `shell/exports.sh`   | history, PATH, `$WORDLISTS`/`$SECLISTS`, `$OPS` |
+| `shell/aliases.sh`   | `ports`, `myip`, `vpnip`, clipboard, listing |
+| `shell/functions.sh` | the workflow helpers above |
+| `shell/zsh.sh`       | `payload`, `cmdlog`, `denv` |
+| `shell/zsh/context.zsh`  | the context bar |
+| `shell/zsh/guard.zsh`    | scope + VPN interlock, `scope` |
+| `shell/zsh/recall.zsh`   | ledger index, `^X^R`, ghost-text strategy |
+| `shell/zsh/hosts.zsh`    | host harvesting, `_nxc`, impacket completion |
+| `shell/zsh/snippets.zsh` | `^X^S`, `^X^P` |
+| `snippets/*.txt`     | the command catalogue |
+| `bin/`               | `addhost`, and the renderers fzf shells out to |
+| `tmux/tmux.conf`     | `C-a` prefix, per-pane logging, tun0 in the status bar |
+| `tools/`             | installers, Mythic bootstrap, backfill, selftest |
 
-```bash
-# per-command logging — timestamped ledger, auto-scoped to the current box.
-# preexec writes every command to $RT_CMDLOG (set by `target`) or a daily
-# global log at ~/ops/cmdlog/YYYY-MM-DD.log. Distinct from tmux pane logs,
-# which capture screen output; this is a greppable command trail for reporting.
-cmdlog                   # show status / current log path
-cmdlog off | on          # pause/resume (e.g. before typing a password)
-cmdlog /path/to.log      # pin the log elsewhere
+## tmux
 
-payload smb              # fzf-browse SecLists/PayloadsAllTheThings, preview + copy path
-denv                     # drop a direnv .envrc template (DOMAIN/DC/U/P) in cwd
-```
-
-Plus `fzf` keybindings (Ctrl-R fuzzy history, Ctrl-T files, Alt-C cd) and
-`direnv` auto-loading per-engagement `.envrc` on `cd`. Install both with
-`tools/install-tools.sh`; until then these degrade gracefully.
-
-## tmux logging
-
-`prefix + P` (prefix is `C-a`) toggles per-pane logging to
-`~/ops/tmux-logs/` — a running transcript of everything in that pane, useful
-for engagement notes and reporting.
+`prefix + P` (prefix is `C-a`) toggles per-pane logging to `~/ops/tmux-logs/` —
+a transcript of screen output, distinct from the command ledger.
 
 ## Uninstall
 
 ```bash
-rm ~/.bash_aliases ~/.tmux.conf      # restore backups from ~/.dotfiles-backup/ if needed
+rm ~/.bash_aliases ~/.tmux.conf      # restore from ~/.dotfiles-backup/ if needed
 # zsh: delete the block between the "red-team dotfiles" markers in ~/.zshrc
 ```
