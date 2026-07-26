@@ -44,6 +44,12 @@ _rt_trivial() {
 _rt_index_add() {
     local cmd=${1//$'\t'/ } dir=$PWD stamp
     [[ -z ${cmd//[[:space:]]/} ]] && return
+    # Belt and braces: _rt_cmdlog already redacts before calling here, but this
+    # file is what feeds ghost text, so it must never carry a secret even if
+    # something else starts calling this directly. Redaction is idempotent.
+    if (( $+functions[_rt_redact_r] )); then
+        local REPLY; _rt_redact_r "$cmd"; cmd=$REPLY
+    fi
     stamp=$(strftime '%F %T' $EPOCHSECONDS 2>/dev/null) || stamp=$(date '+%F %T')
     mkdir -p "${RT_CMD_INDEX:h}" 2>/dev/null || return
     print -r -- "$stamp	$dir	$cmd" >> "$RT_CMD_INDEX"

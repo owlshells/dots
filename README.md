@@ -15,7 +15,7 @@ behaviour you never type.
 ## Install
 
 ```bash
-git clone git@github.com:0w15h3115/dots.git ~/dots
+git clone git@github.com:owlshells/dots.git ~/dots
 ~/dots/install.sh          # symlinks ~/.bash_aliases and ~/.tmux.conf (backs up originals)
 exec zsh
 ```
@@ -25,7 +25,8 @@ Optional:
 ```bash
 ~/dots/tools/install-tools.sh      # the CLI tools referenced here
 ~/dots/tools/backfill-index.sh     # seed recall from command logs you already have
-~/dots/tools/selftest.zsh          # 105 checks, no network or engagement needed
+~/dots/tools/selftest.zsh          # 145 checks, no network or engagement needed
+~/dots/tools/scrub-logs.sh         # retro-redact secrets from logs already on disk
 ```
 
 **bash** hooks in through `~/.bash_aliases`; **zsh** appends one guarded
@@ -87,6 +88,53 @@ Ranking never uses tool names — a denylist of "noise commands" is stale the da
 you install something new. Entries are judged on shape (does it take arguments)
 and place (was it run under `$OPS`), which holds for tools that do not exist
 yet. `^A` in the picker drops the filter entirely.
+
+### Credentials never reach the ledger
+
+The ledger records every command, which means a password typed on the command
+line would land in the box's `notes/commands.log` — and from there in the report
+— and in the recall index, which would then offer it back as ghost text.
+`cmdlog off` was the only defence, and an opt-in defence is one you forget
+exactly when it matters.
+
+So redaction happens **on write**, by default:
+
+```
+nxc smb 10.10.11.42 -u svc -p 'Passw0rd!'   ->  ... -u svc -p {{redacted}}
+impacket-secretsdump corp/svc:Passw0rd@dc   ->  corp/svc:{{redacted}}@dc
+smbclient //h/s -U 'CORP\svc%Passw0rd'      ->  -U 'CORP\svc%{{redacted}}'
+AWS_SECRET_ACCESS_KEY=wJalrXUtn aws s3 ls   ->  AWS_SECRET_ACCESS_KEY={{redacted}}
+```
+
+The mark is `{{redacted}}` so a recalled command reads as a template with a hole
+in it, matching the snippet grammar — and unlike `<redacted>` it stays inert if
+you run it by accident.
+
+Over-redaction is treated as its own failure, because a ledger that eats your
+`nmap` port lists is one you switch off, and that leaks everything. So values
+are judged by shape: `nmap -Pn -p-`, `-p 445,139` and `-p 1-65535` are port
+specs and survive; `-p ''` is a null session and survives; `-H 10.10.11.42` is
+smbmap's *host* and survives while `-H <32 hex>` is a hash and does not.
+
+Bare `-p` is only treated as a password for commands whose `-p` really is one
+(`nxc`, `sshpass`, `smbmap`, `hydra`, `impacket-*`, …) — real logs had
+`sudo mkdir -p /opt/x` being redacted. The unambiguous long forms
+(`--password`, `--pass`) are always honoured, as are `user:pass@host`,
+`user%pass` and secret-named assignments.
+
+Known misses, by design: a purely numeric password is indistinguishable from a
+port, `mysql -p<pass>` from a flag bundle, and an unlisted tool's bare `-p`
+from anything else. `RT_REDACT=0` disables the whole thing.
+
+Anything already logged before this existed:
+
+```bash
+tools/scrub-logs.sh --dry-run    # then without, to rewrite in place
+```
+
+It keeps a `.prescrub` copy of every file it changes, refuses to write if a
+rewrite would alter a line without redacting it, and leaves every untouched
+line byte-identical.
 
 ### Completion that follows your scans
 
@@ -155,6 +203,7 @@ denv                     # direnv .envrc template for per-engagement creds
 | `shell/zsh/guard.zsh`    | scope + VPN interlock, `scope` |
 | `shell/zsh/recall.zsh`   | ledger index, `^X^R`, ghost-text strategy |
 | `shell/zsh/hosts.zsh`    | host harvesting, `_nxc`, impacket completion |
+| `shell/zsh/redact.zsh`   | keeps credentials out of the ledger, on write |
 | `shell/zsh/snippets.zsh` | `^X^S`, `^X^P` |
 | `snippets/*.txt`     | the command catalogue |
 | `bin/`               | `addhost`, and the renderers fzf shells out to |

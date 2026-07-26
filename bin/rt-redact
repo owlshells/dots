@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# rt-redact — strip credentials from command lines on stdin.
+#
+# The scrub-path mirror of _rt_redact_r in shell/zsh/redact.zsh. Two
+# implementations exist because the live path runs from preexec on every
+# command and must not fork, while this one has to work on files from bash.
+# tools/selftest.zsh asserts the two agree on a shared corpus.
+#
+# Reads command lines on stdin, writes redacted ones on stdout.
+#
+#   rt-redact < commands.log
+#   printf '%s\n' "nxc smb h -u a -p Passw0rd" | rt-redact
+set -euo pipefail
+
+MARK="${RT_REDACT_MARK:-{{redacted\}\}}"
+MARK="${MARK//\\/}"
+
+exec awk -v mark="$MARK" '
+# Split on shell words, not on whitespace, so a quoted value stays one token.
+# Splitting on whitespace leaks: `-p '\''Pass word 1'\''` redacts only "'\''Pass" and
+# writes "word 1'\''" straight to the log. This mirrors zsh ${(z)} closely enough
+# for the job; it does not model backslash escaping, which the live path does.
+function tokenize(s, arr,   i, c, tok, q, n) {
+    n = 0; tok = ""; q = ""
+    for (i = 1; i <= length(s); i++) {
+        c = substr(s, i, 1)
+        if (q != "") {
+            tok = tok c
+            if (c == q) q = ""
+        } else if (c == "\x27" || c == "\"") {
+            q = c; tok = tok c
+        } else if (c == " " || c == "\t") {
+            if (tok != "") { arr[++n] = tok; tok = "" }
+        } else {
+            tok = tok c
+        }
+    }
+    if (tok != "") arr[++n] = tok
+    return n
+}
+function is_secret(v) {
+    if (v == "" || v == "\x27\x27" || v == "\"\"") return 0   # null session, not a secret
+    if (v ~ /^[0-9,-]+$/)                          return 0   # a port list
+    return 1
+}
+# -H is a hash in netexec but the HOST in smbmap. Judge the value, not the flag.
+function is_hash_value(v) {
+    gsub(/[\x27"]/, "", v); gsub(/:/, "", v)
+    return (length(v) >= 16 && v ~ /^[0-9a-fA-F]+$/)
+}
+# Short -p is ambiguous (password in netexec, make-parents in mkdir, preserve
+# in cp, port in nmap/psql) so it is only honoured for commands whose -p really
+# is a password. Long forms are unambiguous. Mirrors shell/zsh/redact.zsh.
+function is_pw_flag_long(f) {
+    return (f=="--password" || f=="--pass" || f=="--passwd" || f=="--pw")
+}
+function is_pw_flag_short(f) {
+    return (f=="-p" || f=="-P")
+}
+function is_pw_tool(c) {
+    if (c ~ /^impacket-/) return 1
+    return (c=="nxc" || c=="netexec" || c=="crackmapexec" || c=="cme" || c=="smbmap" ||
+            c=="sshpass" || c=="evil-winrm" || c=="hydra" || c=="medusa" ||
+            c=="mongo" || c=="mongosh" || c=="mysql" || c=="mysqldump")
+}
+function is_wrapper(c) {
+    return (c=="sudo" || c=="doas" || c=="proxychains" || c=="proxychains4" ||
+            c=="env" || c=="time" || c=="watch" || c=="nohup" || c=="stdbuf")
+}
+function basename_(s,   n, a) { n = split(s, a, "/"); return a[n] }
+# Effective command, wrappers and leading VAR=val peeled off.
+function eff_cmd(arr, n,   i, b) {
+    for (i = 1; i <= n; i++) {
+        if (index(arr[i], "=") > 0) continue
+        b = basename_(arr[i])
+        if (is_wrapper(b)) continue
+        return b
+    }
+    return ""
+}
+function is_hash_flag(f) {
+    return (f=="-H" || f=="--hash" || f=="-hashes" || f=="--hashes" || f=="-nthash" || f=="--nt-hash" || f=="--ntlm-hash")
+}
+function is_user_flag(f) {
+    return (f=="-U" || f=="--user" || f=="--username")
+}
+function is_secret_name(n) {
+    return (toupper(n) ~ /^(P|PW|PASS|PASSWD|PASSWORD|TOKEN|SECRET|APIKEY|API_KEY|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|DOTS_TOKEN)$/)
+}
+# domain/user:secret@target — impacket specs and credentialed URLs
+function mask_colon_at(s,   at, pre, rest) {
+    at = index(s, "@")
+    if (at < 2) return s
+    pre = substr(s, 1, at - 1); rest = substr(s, at)
+    if (match(pre, /:[^:]*$/)) return substr(pre, 1, RSTART) mark rest
+    return s
+}
+{
+    n = tokenize($0, w)
+    pw_short = is_pw_tool(eff_cmd(w, n))
+    out = ""; prev = ""
+    for (i = 1; i <= n; i++) {
+        cur = w[i]; eq = index(cur, "=")
+        if (prev != "" && is_secret(cur) && \
+            (is_pw_flag_long(prev) || (pw_short && is_pw_flag_short(prev)) || \
+             (is_hash_flag(prev) && is_hash_value(cur)))) {
+            cur = mark
+        } else if (eq > 1) {
+            name = substr(w[i], 1, eq - 1); val = substr(w[i], eq + 1)
+            if (is_secret(val) && (is_pw_flag_long(name) || is_hash_flag(name) ||
+                                   is_secret_name(name) || (pw_short && is_pw_flag_short(name))))
+                cur = name "=" mark
+        } else if ((prev != "" && is_user_flag(prev) && index(cur, "%") > 0) || cur ~ /^-U.+%/) {
+            q = ""                                              # keep a closing quote
+            first = substr(cur, 1, 1); last = substr(cur, length(cur), 1)
+            if ((first == "\x27" || first == "\"") && first == last) q = last
+            cur = substr(cur, 1, index(cur, "%")) mark q         # smbclient user%pass
+        } else if (w[i] ~ /:[^:@ ]+@/) {
+            cur = mask_colon_at(w[i])
+        }
+        out = (out == "" ? cur : out " " cur)
+        prev = w[i]
+    }
+    # Only emit the rebuilt line when something was redacted; otherwise print
+    # the input verbatim, so whitespace and indentation survive untouched.
+    print (index(out, mark) ? out : $0)
+}
+'

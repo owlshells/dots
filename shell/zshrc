@@ -38,13 +38,20 @@ autoload -Uz add-zsh-hook
 _rt_logpath() { print -r -- "${RT_CMDLOG:-$OPS/cmdlog/$(date +%F).log}"; }
 _rt_cmdlog() {
     [ -n "$RT_CMDLOG_OFF" ] && return   # checked first: no work when paused
+    # Strip credentials BEFORE anything is written. This log ends up in the
+    # box's notes and from there in the report, so a password typed on the
+    # command line must never reach it in the first place — hiding it at read
+    # time would be too late. See shell/zsh/redact.zsh.
+    local cmd="$1"
+    if (( $+functions[_rt_redact_r] )); then
+        local REPLY; _rt_redact_r "$1"; cmd="$REPLY"
+    fi
     local log; log="$(_rt_logpath)"
     mkdir -p "${log:h}" 2>/dev/null || return
-    printf '%s  [%s]  %s\n' "$(date '+%F %T')" "${PWD/#$HOME/~}" "$1" >> "$log"
+    printf '%s  [%s]  %s\n' "$(date '+%F %T')" "${PWD/#$HOME/~}" "$cmd" >> "$log"
     # Same event, second consumer: a machine-readable index that shell/zsh/
-    # recall.zsh reads back as ghost text and as the ^X^R picker. The human log
-    # above stays exactly as it was — this is additive.
-    (( $+functions[_rt_index_add] )) && _rt_index_add "$1"
+    # recall.zsh reads back as ghost text and as the ^X^R picker.
+    (( $+functions[_rt_index_add] )) && _rt_index_add "$cmd"
 }
 add-zsh-hook preexec _rt_cmdlog
 

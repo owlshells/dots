@@ -247,6 +247,103 @@ P='$(id)'
 ok "$(_rt_snippet_fill '{{P}}')" '$(id)' "command substitution is not evaluated"
 P=""
 
+# ==============================================================================
+# redaction
+# ==============================================================================
+source $RT_DOTFILES/shell/zsh/redact.zsh
+
+t "redaction: what must survive"
+# Over-redaction is its own failure: a ledger that eats nmap's port list is a
+# ledger you stop trusting, and then you turn the whole thing off.
+typeset -A _keep=(
+    'nmap -Pn -p- 10.10.11.42'                    'nmap -Pn -p- 10.10.11.42'
+    'nmap -Pn -sCV -p 445,139,3389 10.10.11.42'   'nmap -Pn -sCV -p 445,139,3389 10.10.11.42'
+    'nmap -p 1-65535 10.10.11.42'                 'nmap -p 1-65535 10.10.11.42'
+    'ssh -L 8081:10.10.11.5:80 -N svc@10.10.11.42' 'ssh -L 8081:10.10.11.5:80 -N svc@10.10.11.42'
+    'git clone git@github.com:owlshells/dots.git'  'git clone git@github.com:owlshells/dots.git'
+    'smbmap -H 10.10.11.42 -u svc'                 'smbmap -H 10.10.11.42 -u svc'
+    'smbclient //h/share -U svc'                   'smbclient //h/share -U svc'
+    'hashcat -m 1000 h.txt rockyou.txt'            'hashcat -m 1000 h.txt rockyou.txt'
+    'sudo mkdir -p /opt/Mythic/loot'               'sudo mkdir -p /opt/Mythic/loot'
+    'mkdir -p scans'                               'mkdir -p scans'
+    'cp -p src dst'                                'cp -p src dst'
+    'psql -h db -p 5432 -U svc'                    'psql -h db -p 5432 -U svc'
+)
+for _in in ${(k)_keep}; do ok "$(_rt_redact $_in)" "${_keep[$_in]}" "untouched: $_in"; done
+ok "$(_rt_redact "nxc smb h -u '' -p ''")"   "nxc smb h -u '' -p ''"   "null session is not a secret"
+ok "$(_rt_redact 'nxc smb h -u guest -p ""')" 'nxc smb h -u guest -p ""' "empty double quotes too"
+
+t "redaction: what must not survive"
+has "$(_rt_redact 'nxc smb h -u svc -p Passw0rd')"          '{{redacted}}' "-p value"
+ok  "$(_rt_redact 'nxc smb h -u svc -p Passw0rd')" 'nxc smb h -u svc -p {{redacted}}' "and nothing else"
+has "$(_rt_redact 'nxc ldap dc -u s --password Winter2025')" '{{redacted}}' "--password value"
+has "$(_rt_redact 'curl --pass=abc123 https://x')"          'pass={{redacted}}' "--flag=value form"
+has "$(_rt_redact 'nxc smb dc -u s -H aad3b435b51404eeaad3b435b51404ee')" '{{redacted}}' "ntlm hash"
+has "$(_rt_redact 'impacket-secretsdump corp/svc:Passw0rd@10.10.11.10')" 'svc:{{redacted}}@' "impacket target spec"
+has "$(_rt_redact 'curl https://user:s3cr3t@example.com/a')" 'user:{{redacted}}@' "credential in a url"
+has "$(_rt_redact 'smbclient //h/s -U svc%Passw0rd')"       'svc%{{redacted}}' "samba user%password"
+has "$(_rt_redact 'AWS_SECRET_ACCESS_KEY=wJalr aws s3 ls')" '{{redacted}}' "secret-named assignment"
+has "$(_rt_redact "export U=svc P='Passw0rd!'")"            'P={{redacted}}' "our own P= convention"
+has "$(_rt_redact 'sshpass -p hunter2 ssh a@b')"            '{{redacted}}' "sshpass"
+
+t "redaction: the ambiguous short flag is gated on the tool"
+# `-p` is a password in netexec and make-parents in mkdir. Found on real logs.
+ok "$(_rt_redact 'sudo mkdir -p /opt/x')" 'sudo mkdir -p /opt/x' "mkdir keeps its path"
+ok "$(_rt_redact 'nxc smb h -u s -p Passw0rd')" 'nxc smb h -u s -p {{redacted}}' "netexec still redacted"
+ok "$(_rt_redact 'sudo proxychains nxc smb h -u s -p Passw0rd')" \
+   'sudo proxychains nxc smb h -u s -p {{redacted}}' "wrappers are seen through"
+ok "$(_rt_redact 'sometool -p Passw0rd')" 'sometool -p Passw0rd' \
+   "an unlisted tool's bare -p is left alone (documented miss)"
+has "$(_rt_redact 'sometool --password Passw0rd')" '{{redacted}}' \
+   "but its unambiguous long form is still caught"
+
+t "redaction: leaks that were found the hard way"
+ok "$(_rt_redact "nxc smb h -u svc -p 'Pass word 1'")" 'nxc smb h -u svc -p {{redacted}}' \
+   "a password containing spaces leaves nothing behind"
+ok "$(_rt_redact "smbclient //h/s -U 'CORP\svc%Passw0rd'")" "smbclient //h/s -U 'CORP\svc%{{redacted}}'" \
+   "quoted user%password keeps its closing quote"
+ok "$(_rt_redact 'smbmap -H 10.10.11.42 -u svc -p Passw0rd')" 'smbmap -H 10.10.11.42 -u svc -p {{redacted}}' \
+   "-H keeps a host but redacts a hash"
+
+t "redaction: idempotent and switchable"
+typeset -g _once=$(_rt_redact 'nxc smb h -u s -p Passw0rd')
+ok "$(_rt_redact $_once)" "$_once" "redacting twice changes nothing"
+ok "$(RT_REDACT=0 _rt_redact 'nxc smb h -u s -p Passw0rd')" 'nxc smb h -u s -p Passw0rd' "RT_REDACT=0 disables"
+ok "$(_rt_redact '')" "" "empty input"
+
+t "redaction: the zsh and awk implementations agree"
+# The live path must not fork, the scrub path runs from bash. Two versions is
+# the cost; drift between them is the risk, so it is asserted.
+typeset -g _corpus=$OPS/corpus.txt
+print -rl -- \
+  'nmap -Pn -p- 10.10.11.42' 'nmap -p 445,139 10.10.11.42' \
+  "nxc smb h -u '' -p ''" 'nxc smb h -u guest -p ""' \
+  'nxc smb h -u svc -p Passw0rd' 'nxc ldap dc -u s --password Winter2025 --shares' \
+  'nxc smb dc -u s -H aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0' \
+  'impacket-secretsdump corp.local/svc:Passw0rd@10.10.11.10' \
+  'impacket-psexec -hashes :31d6cfe0d16ae931b73c59d7e0c089c0 corp/a@1.2.3.4' \
+  'curl https://user:s3cr3t@example.com/api' 'curl --pass=abc123 https://x' \
+  'AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI aws s3 ls' 'sshpass -p hunter2 ssh a@b' \
+  "smbclient //h/share -U 'CORP\svc%Passw0rd'" 'rpcclient -U svc%Passw0rd 10.10.11.10' \
+  'smbmap -H 10.10.11.42 -u svc -p Passw0rd' 'ssh -L 8081:10.10.11.5:80 -N svc@10.10.11.42' \
+  'git clone git@github.com:owlshells/dots.git' "nxc smb h -u svc -p 'Pass word 1'" \
+  > $_corpus
+typeset -g _z=$(while IFS= read -r l; do _rt_redact "$l"; done < $_corpus)
+typeset -g _a=$(rt-redact < $_corpus)
+if [[ $_z == $_a ]]; then
+    ok "1" "1" "both implementations agree on $(wc -l < $_corpus) command lines"
+else
+    fail_lines=$(diff <(print -r -- "$_z") <(print -r -- "$_a") | head -8)
+    ok "$fail_lines" "" "implementations diverge"
+fi
+
+t "redaction: the write path actually applies it"
+: > $RT_CMD_INDEX; _rt_recall_mem=()
+_rt_index_add 'nxc smb 10.10.11.42 -u svc -p SuperSecret123'
+ok "$(grep -c SuperSecret123 $RT_CMD_INDEX)" "0" "secret never reaches the index"
+has "$(cat $RT_CMD_INDEX)" '{{redacted}}' "the placeholder is what lands"
+ok "${_rt_recall_mem[(I)*SuperSecret123*]}" "0" "and never reaches the ghost-text corpus"
+
 print -r -- ""
 if (( _t_fail )); then print -r -- "FAILED  ($_t_run checks)"; else print -r -- "all pass ($_t_run checks)"; fi
 exit $_t_fail
