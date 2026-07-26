@@ -1,9 +1,27 @@
 #!/usr/bin/env bash
 # install.sh — symlink dots into place. Idempotent; backs up anything real.
+#
+#   --no-tmux   leave ~/.tmux.conf alone
+#
+# --no-tmux exists for hosts whose tmux config is owned by something else and is
+# purpose-built for that host — kali-deploy-remote writes a headless SSH config
+# (auto-attach, multi-window) that is a better fit there than this repo's. Note
+# that without it the symlink would also mean any tool doing `cat > ~/.tmux.conf`
+# writes straight into this repo.
 set -euo pipefail
 
 DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKUP="$HOME/.dotfiles-backup/$(date +%Y%m%d-%H%M%S)"
+
+NO_TMUX=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --no-tmux) NO_TMUX=1 ;;
+        -h|--help) sed -n '2,10p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        *) echo "install.sh: unknown option '$1'" >&2; exit 1 ;;
+    esac
+    shift
+done
 
 link() {
     local src="$1" dst="$2"
@@ -23,7 +41,11 @@ link() {
 
 # ~/.bash_aliases is the hook Kali's stock .bashrc already sources.
 link "$DOTFILES/shell/bash_aliases" "$HOME/.bash_aliases"
-link "$DOTFILES/tmux/tmux.conf"     "$HOME/.tmux.conf"
+if [ "$NO_TMUX" -eq 1 ]; then
+    echo "skip  ~/.tmux.conf (--no-tmux)"
+else
+    link "$DOTFILES/tmux/tmux.conf" "$HOME/.tmux.conf"
+fi
 
 # zsh has no stock drop-in Kali auto-sources, so append a guarded hook to
 # ~/.zshrc (non-destructive — Kali keeps its prompt/plugins; we add ours after).
