@@ -1,8 +1,5 @@
 # dots
 
-Red-team / pentest shell setup for Kali. Modular, symlink-based, and
-non-destructive.
-
 The design rule is that this layer should **work without being invoked**. A
 shorter name for a command is a second vocabulary to memorise and it buys
 nothing; the shell knowing which box you are on, refusing to fire at something
