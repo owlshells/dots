@@ -39,7 +39,7 @@ vinny_prompt_precmd() {
   if [ $EXIT != 0 ]; then
     PS1="%{$fg[red]%}󰁔 (%F{$VINNY_NEON_PURPLE}$EXIT%{$fg[red]%})"
   else
-    PS1="%F{$VINNY_NEON_PURPLE}󰁔"
+    PS1="%F{$VINNY_NEON_PINK}󰁔"
   fi
 
   # Git (only active when in a repo, changes branch name cyan/red)
@@ -50,7 +50,7 @@ vinny_prompt_precmd() {
   fi
   local git_ps1=$(__git_ps1 "%%F{$VINNY_NEON_PURPLE} %%{$fg[$git_ps1_branch_color]%%}%s ")
 
-  PS1+=" %{$fg[cyan]%}%1~ $git_ps1%F{$VINNY_NEON_PINK}  %{$reset_color%}"
+  PS1+=" %{$fg[cyan]%}%1~ $git_ps1%F{$VINNY_NEON_PURPLE}  %{$reset_color%}"
 }
 
 autoload -Uz add-zsh-hook
