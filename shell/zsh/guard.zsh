@@ -12,6 +12,17 @@ autoload -Uz add-zsh-hook
 
 typeset -g _rt_guard_ack=""        # buffer the operator has already been warned about
 
+# The ack means "you were warned about this exact line, a moment ago" -- press
+# enter twice in a row and it runs. It must not outlive the line it belongs to.
+#
+# Clearing it only when a command runs was not enough: warn, then abandon the
+# line with ^C, and the ack survived. Retyping the same command later matched it
+# and ran with no warning at all -- silently skipping the check on a command the
+# operator had never confirmed. A new prompt means a new line, so the ack dies
+# with the old one, whether the previous line ran or was thrown away.
+_rt_guard_reset_ack() { _rt_guard_ack=""; }
+add-zsh-hook precmd _rt_guard_reset_ack
+
 # --- IPv4 arithmetic -----------------------------------------------------------
 _rt_ip2int() {
     local -a o; o=(${(s:.:)1})

@@ -231,6 +231,11 @@ typeset -A _keep=(
     'mkdir -p scans'                               'mkdir -p scans'
     'cp -p src dst'                                'cp -p src dst'
     'psql -h db -p 5432 -U svc'                    'psql -h db -p 5432 -U svc'
+    # A quoted argument is one shell word, so the credential-spec rule used to
+    # match a colon and an @ anywhere in ordinary prose and eat everything
+    # between them. Conventional-commit subjects with an @ mention hit it daily.
+    'git commit -m "fix: mention user@example.com"' 'git commit -m "fix: mention user@example.com"'
+    'echo "call at 10:30 or mail bob@corp.com"'     'echo "call at 10:30 or mail bob@corp.com"'
 )
 for _in in ${(k)_keep}; do ok "$(_rt_redact $_in)" "${_keep[$_in]}" "untouched: $_in"; done
 ok "$(_rt_redact "nxc smb h -u '' -p ''")"   "nxc smb h -u '' -p ''"   "null session is not a secret"
@@ -248,6 +253,16 @@ has "$(_rt_redact 'smbclient //h/s -U svc%Passw0rd')"       'svc%{{redacted}}' "
 has "$(_rt_redact 'AWS_SECRET_ACCESS_KEY=wJalr aws s3 ls')" '{{redacted}}' "secret-named assignment"
 has "$(_rt_redact "export U=svc P='Passw0rd!'")"            'P={{redacted}}' "our own P= convention"
 has "$(_rt_redact 'sshpass -p hunter2 ssh a@b')"            '{{redacted}}' "sshpass"
+
+# An all-digit value is only ambiguous after a short flag, where -p might be a
+# port list. After an unambiguous indicator it is a password whatever it looks
+# like -- these leaked in cleartext until the port-list check was scoped to the
+# short-flag path, and every secret in this file being non-numeric is why the
+# suite stayed green through it.
+has "$(_rt_redact 'nxc ldap dc -u s --password 12345678')"  '{{redacted}}' "numeric --password value"
+has "$(_rt_redact 'nxc ldap dc -u s --password=87654321')"  '{{redacted}}' "numeric --password=value"
+has "$(_rt_redact 'PASSWORD=12345678 ./run.sh')"            'PASSWORD={{redacted}}' "numeric PASSWORD="
+has "$(_rt_redact 'GITHUB_TOKEN=1234567890 gh auth login')" 'GITHUB_TOKEN={{redacted}}' "all-digit token"
 
 t "redaction: the ambiguous short flag is gated on the tool"
 # `-p` is a password in netexec and make-parents in mkdir. Found on real logs.
@@ -290,6 +305,10 @@ print -rl -- \
   "smbclient //h/share -U 'CORP\svc%Passw0rd'" 'rpcclient -U svc%Passw0rd 10.10.11.10' \
   'smbmap -H 10.10.11.42 -u svc -p Passw0rd' 'ssh -L 8081:10.10.11.5:80 -N svc@10.10.11.42' \
   'git clone git@github.com:owlshells/dots.git' "nxc smb h -u svc -p 'Pass word 1'" \
+  'git commit -m "fix: mention user@example.com"' 'echo "call at 10:30 or mail bob@corp.com"' \
+  'nxc ldap dc -u s --password 12345678' 'nxc ldap dc -u s --password=87654321' \
+  'PASSWORD=12345678 ./run.sh' 'GITHUB_TOKEN=1234567890 gh auth login' \
+  'nmap -p 80,443 10.10.11.42' \
   > $_corpus
 typeset -g _z=$(while IFS= read -r l; do _rt_redact "$l"; done < $_corpus)
 typeset -g _a=$(rt-redact < $_corpus)

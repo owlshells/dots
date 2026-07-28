@@ -40,8 +40,13 @@ function tokenize(s, arr,   i, c, tok, q, n) {
 }
 function is_secret(v) {
     if (v == "" || v == "\x27\x27" || v == "\"\"") return 0   # null session, not a secret
-    if (v ~ /^[0-9,-]+$/)                          return 0   # a port list
     return 1
+}
+# All-digits is only ambiguous after a SHORT flag, where -p might be nmap"s port
+# list. After --password, or in PASSWORD=, the value is a password whatever it
+# looks like. Mirrors _rt_is_port_list in shell/zsh/redact.zsh.
+function is_port_list(v) {
+    return (v ~ /^[0-9,-]+$/)
 }
 # -H is a hash in netexec but the HOST in smbmap. Judge the value, not the flag.
 function is_hash_value(v) {
@@ -92,7 +97,7 @@ function mask_colon_at(s,   at, pre, rest) {
     at = index(s, "@")
     if (at < 2) return s
     pre = substr(s, 1, at - 1); rest = substr(s, at)
-    if (match(pre, /:[^:]*$/)) return substr(pre, 1, RSTART) mark rest
+    if (match(pre, /:[^:@ \t]*$/)) return substr(pre, 1, RSTART) mark rest
     return s
 }
 {
@@ -102,20 +107,22 @@ function mask_colon_at(s,   at, pre, rest) {
     for (i = 1; i <= n; i++) {
         cur = w[i]; eq = index(cur, "=")
         if (prev != "" && is_secret(cur) && \
-            (is_pw_flag_long(prev) || (pw_short && is_pw_flag_short(prev)) || \
+            (is_pw_flag_long(prev) || \
+             (pw_short && is_pw_flag_short(prev) && !is_port_list(cur)) || \
              (is_hash_flag(prev) && is_hash_value(cur)))) {
             cur = mark
         } else if (eq > 1) {
             name = substr(w[i], 1, eq - 1); val = substr(w[i], eq + 1)
             if (is_secret(val) && (is_pw_flag_long(name) || is_hash_flag(name) ||
-                                   is_secret_name(name) || (pw_short && is_pw_flag_short(name))))
+                                   is_secret_name(name) ||
+                                   (pw_short && is_pw_flag_short(name) && !is_port_list(val))))
                 cur = name "=" mark
         } else if ((prev != "" && is_user_flag(prev) && index(cur, "%") > 0) || cur ~ /^-U.+%/) {
             q = ""                                              # keep a closing quote
             first = substr(cur, 1, 1); last = substr(cur, length(cur), 1)
             if ((first == "\x27" || first == "\"") && first == last) q = last
             cur = substr(cur, 1, index(cur, "%")) mark q         # smbclient user%pass
-        } else if (w[i] ~ /:[^:@ ]+@/) {
+        } else if (w[i] ~ /:[^:@ \t]+@/) {
             cur = mask_colon_at(w[i])
         }
         out = (out == "" ? cur : out " " cur)

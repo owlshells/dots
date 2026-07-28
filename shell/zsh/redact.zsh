@@ -64,8 +64,18 @@ _rt_is_secret_value() {
     [[ -z $v ]]           && return 1     # nothing there
     [[ $v == "''" ]]      && return 1     # `-p ''` is a null session, not a secret
     [[ $v == '""' ]]      && return 1
-    [[ $v == [0-9,-]## ]] && return 1     # a port list, not a password
     return 0
+}
+
+# All-digits is only ambiguous after a SHORT flag, where -p might be nmap's port
+# list. After --password, or in PASSWORD=, there is no such ambiguity and the
+# value is a password whatever it looks like -- so this check is applied only on
+# the short-flag path. Applying it everywhere wrote numeric passwords, PINs and
+# all-digit tokens to the ledger in cleartext, which is the exact outcome this
+# file exists to prevent.
+_rt_is_port_list() {
+    setopt local_options extended_glob
+    [[ $1 == [0-9,-]## ]]
 }
 
 # Sets REPLY rather than printing: this runs from preexec on every command, and
@@ -99,7 +109,8 @@ _rt_redact_r() {
         # 1. value following a secret-bearing flag
         if [[ -n $prev ]] && _rt_is_secret_value "$w" \
            && { (( ${_RT_PW_FLAGS_LONG[(I)$prev]} )) \
-                || { (( pw_short )) && (( ${_RT_PW_FLAGS_SHORT[(I)$prev]} )) } \
+                || { (( pw_short )) && (( ${_RT_PW_FLAGS_SHORT[(I)$prev]} )) \
+                     && ! _rt_is_port_list "$w" } \
                 || { (( ${_RT_HASH_FLAGS[(I)$prev]} )) && _rt_is_hash_value "$w" } }; then
             out+=( "$m" ); prev=$w; continue
         fi
@@ -107,8 +118,9 @@ _rt_redact_r() {
         if [[ $w == *=* ]]; then
             name=${w%%=*}; val=${w#*=}
             if _rt_is_secret_value "$val" \
-               && (( ${_RT_PW_FLAGS_LONG[(I)$name]} + ${_RT_HASH_FLAGS[(I)$name]} \
-                     + (pw_short ? ${_RT_PW_FLAGS_SHORT[(I)$name]} : 0) )); then
+               && { (( ${_RT_PW_FLAGS_LONG[(I)$name]} + ${_RT_HASH_FLAGS[(I)$name]} )) \
+                    || { (( pw_short )) && (( ${_RT_PW_FLAGS_SHORT[(I)$name]} )) \
+                         && ! _rt_is_port_list "$val" } }; then
                 out+=( "${name}=${m}" ); prev=$w; continue
             fi
             if [[ $name == (#i)${~_RT_SECRET_NAME} ]] && _rt_is_secret_value "$val"; then
@@ -122,8 +134,17 @@ _rt_redact_r() {
             out+=( "${w%%\%*}%$m$q" ); prev=$w; continue
         fi
         # 4. domain/user:secret@target -- impacket specs and credentialed URLs
+        #
+        # The secret span must not cross whitespace. A credential spec is one
+        # unbroken token, but a quoted argument is also a single shell word, so
+        # without this a colon and an @ anywhere in ordinary prose matched and
+        # everything between them was replaced:
+        #   git commit -m "fix: mention user@example.com"
+        #     -> git commit -m "fix:{{redacted}}@example.com"
+        # which destroys content in a ledger that ends up in the report. This is
+        # also what bin/rt-redact already did, so the two now agree.
         if [[ $w == *:*@* ]]; then
-            out+=( "${w//(#b)(:)([^:@]##)(@)/$match[1]$m$match[3]}" ); prev=$w; continue
+            out+=( "${w//(#b)(:)([^:@[:space:]]##)(@)/$match[1]$m$match[3]}" ); prev=$w; continue
         fi
         out+=( "$w" ); prev=$w
     done
