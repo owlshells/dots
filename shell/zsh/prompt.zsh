@@ -1,9 +1,11 @@
-# ~/dots/shell/zsh/prompt.zsh — the left prompt, in neon.
+# ~/dots/shell/zsh/prompt.zsh — the left prompt.
 #
-# Ported from https://github.com/vinnydiehl/zshrc (rc.zsh), then recoloured:
-# upstream leans on the terminal's `magenta` slots, which under Neowave Mocha
-# are Catppuccin pastels (#cba6f7 / #f5c2e7) and read muted. The glyphs are
-# pinned to 24-bit hex instead, so they stay neon under any scheme.
+# Ported from https://github.com/vinnydiehl/zshrc (rc.zsh), then recoloured.
+# Upstream leans on the terminal's `magenta` slots, which vary by scheme; the
+# colours here are pinned to 24-bit hex instead, so the prompt looks the same
+# under any theme.
+#
+# Three hues, plus grey and the alert. Nothing else belongs in this file.
 #
 # Needs a Nerd Fonts v3 face: U+F0054 md-arrow_right, U+E725 dev-git_branch,
 # U+F4DF oct-hash. Registered as a precmd *hook* rather than as precmd()
@@ -15,11 +17,30 @@
 
 autoload -U colors && colors
 
-# Neon accents for the prompt glyphs. The terminal palette's magenta slots are
-# Catppuccin pastels (#cba6f7 / #f5c2e7), so the icons are pinned to 24-bit hex
-# instead — tweak these two values to retune, no other edits needed.
-: ${VINNY_NEON_PURPLE:=#c04dff}
-: ${VINNY_NEON_PINK:=#ff3ce0}
+# --- palette ------------------------------------------------------------------
+# All three glyphs share one colour, so they read as a set rather than as three
+# separate decorations. Lavender is the only hue-distinct member of the palette,
+# which makes it the one that can carry that job.
+: ${VINNY_ICON:=#B2A1C0}
+
+# The text. These two are near-twins — desaturated blue-greys about 10 degrees
+# apart — so they must never sit adjacent or they look like a near-miss instead
+# of a choice. They don't: the lavender branch glyph always falls between them.
+# The lighter one takes the path, which is read constantly; the darker one takes
+# the branch, which is glanced at.
+: ${VINNY_PATH:=#88A9B5}
+: ${VINNY_BRANCH:=#83A0A4}
+
+# Exceptions. The two states worth interrupting for — a dirty tree and a
+# non-zero exit — stay red, the one colour that already means "wrong" without
+# having to be learned. Pinned bright rather than left to the theme: this
+# scheme's own reds are Catppuccin pastels (#f38ba8 / #eba0ac) which go soft
+# against a palette this muted, and an alert is the last thing that should
+# whisper. A true red with no hue lean — it is the one element here that is not
+# trying to belong, which is the point. Grey de-emphasises the error parens so
+# the exit code itself is what the eye lands on.
+: ${VINNY_ALERT:=#FF2D2D}
+: ${VINNY_DIM:=242}
 
 # $fg[] / $reset_color above; __git_ps1 below. Upstream gets the latter from
 # the oh-my-zsh gitfast plugin; Debian/Kali ship it with git itself.
@@ -34,23 +55,23 @@ fi
 vinny_prompt_precmd() {
   # Build PS1 dynamically
 
-  # Parse error code (changes arrow cyan/red)
+  # Parse error code (arrow goes red, and the code appears beside it)
   local EXIT="$?"
   if [ $EXIT != 0 ]; then
-    PS1="%{$fg[red]%}󰁔 (%F{$VINNY_NEON_PURPLE}$EXIT%{$fg[red]%})"
+    PS1="%F{$VINNY_ALERT}󰁔 %F{$VINNY_DIM}(%F{$VINNY_ALERT}$EXIT%F{$VINNY_DIM})"
   else
-    PS1="%F{$VINNY_NEON_PINK}󰁔"
+    PS1="%F{$VINNY_ICON}󰁔"
   fi
 
-  # Git (only active when in a repo, changes branch name cyan/red)
+  # Git (only active when in a repo, branch name goes red when the tree is dirty)
   if [ -z "$(git status --porcelain 2>/dev/null)" ]; then
-    local git_ps1_branch_color=cyan
+    local git_ps1_branch_color=$VINNY_BRANCH
   else
-    local git_ps1_branch_color=red
+    local git_ps1_branch_color=$VINNY_ALERT
   fi
-  local git_ps1=$(__git_ps1 "%%F{$VINNY_NEON_PURPLE} %%{$fg[$git_ps1_branch_color]%%}%s ")
+  local git_ps1=$(__git_ps1 "%%F{$VINNY_ICON} %%F{$git_ps1_branch_color}%s ")
 
-  PS1+=" %{$fg[cyan]%}%1~ $git_ps1%F{$VINNY_NEON_PURPLE}  %{$reset_color%}"
+  PS1+=" %F{$VINNY_PATH}%1~ $git_ps1%F{$VINNY_ICON}  %{$reset_color%}"
 }
 
 autoload -Uz add-zsh-hook
