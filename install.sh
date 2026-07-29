@@ -97,7 +97,11 @@ hook_kitty() {
     }
 
     mkdir -p "$share"
-    local png="$share/owl-$tint.png"
+    # A hex tint would put a '#' in the filename. kitty parses that fine, but it
+    # is needless friction everywhere else -- shell quoting, copy-paste, any tool
+    # that treats it as a fragment -- so the name is sanitised, not the value.
+    local slug="${tint//[^A-Za-z0-9._-]/}"
+    local png="$share/owl-$slug.png"
     python3 "$DOTFILES/terminal/mkowl.py" --tint "$tint" -o "$png" >/dev/null || {
         echo "warn  owl image could not be generated -- leaving kitty alone" >&2
         return
