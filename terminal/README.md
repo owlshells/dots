@@ -1,8 +1,33 @@
 # terminal
 
-The terminal's look, as opposed to the shell's behaviour. Nothing here is
-installed by `install.sh` — the settings it describes live on the Windows side,
-outside anything this repo can reach.
+The terminal's look, as opposed to the shell's behaviour.
+
+`install.sh` deploys this to **kitty**, which is the only terminal it targets:
+kitty reads a background image from its own config file, so the whole thing
+stays inside Linux, and it is what the deploy scripts install on a desktop Kali
+box. A headless box has no kitty and the step skips itself, which is the common
+case. `--no-terminal` skips it on a box that has kitty and does not want it.
+
+    ./install.sh                        # slate
+    DOTS_OWL_TINT=ash ./install.sh      # bone, ash, slate, char, or #rrggbb
+
+What that does:
+
+- generates `~/.local/share/dots/owl-<tint>.png` from the mask
+- writes `~/.local/share/dots/kitty-owl.conf` beside it
+- appends a marker-guarded `include` to `~/.config/kitty/kitty.conf`
+
+The picture is generated per-machine and kept **outside the checkout**. Writing
+it into `terminal/` would mean every install dirtied the working tree. The
+fragment is generated rather than tracked-and-symlinked because kitty does not
+expand `~` or `$HOME` in `background_image` — the path has to be absolute, and
+only install time knows it.
+
+Needs Pillow (`apt install python3-pil`); without it the step skips with a note
+rather than failing the install.
+
+Fading is `background_tint 0.75` — kitty blends the background colour over the
+image, so higher is fainter. That is the knob equivalent to an opacity slider.
 
 ## The owl
 
@@ -27,7 +52,13 @@ Regenerate at any tint:
 
     ./mkowl.py --tint slate -o owl-slate.png
 
-## Windows Terminal
+## Windows Terminal — manual, and staying that way
+
+The WSL box is driven through Windows Terminal, which is a Windows application
+configured by a Windows file. `install.sh` deliberately does not touch it: a
+Linux installer reaching across `/mnt/c` to rewrite a Windows app's config is
+the wrong thing for this repo to do, and it would be dead weight on every real
+Kali box. Use `mkowl.py` to produce the image and set this up by hand.
 
 `settings.json` lives at
 
