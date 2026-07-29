@@ -57,8 +57,8 @@ _rt_hosts_nudge() {
     done < $RT_HOSTS_INDEX
     (( ${#fresh} )) || return
     local first=${fresh[1]}
-    print -Pr -- "%F{242}⋯ ${#fresh} scanned name$( (( ${#fresh} > 1 )) && print -n s) not in /etc/hosts:%f ${fresh[1]#* }"
-    print -Pr -- "%F{242}  addhost ${first%% *} ${(j: :)${(@)fresh#* }}%f"
+    print -Pr -- "%F{245}⋯ ${#fresh} scanned name$( (( ${#fresh} > 1 )) && print -n s) not in /etc/hosts:%f ${fresh[1]#* }"
+    print -Pr -- "%F{245}  addhost ${first%% *} ${(j: :)${(@)fresh#* }}%f"
 }
 
 _rt_hosts_hook() {

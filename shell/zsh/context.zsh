@@ -43,7 +43,9 @@ _rt_context_bar() {
     _rt_net_refresh
 
     local -a seg
-    local dim='%F{242}'                       # segments return to this, not %f
+    local dim='%F{245}'                       # segments return to this, not %f
+                                              # 245 matches VINNY_DIM in prompt.zsh;
+                                              # 242 is under 3:1 on the #282828 bg
 
     # the box you are working
     if [[ -n $TARGET_NAME || -n $RHOST ]]; then

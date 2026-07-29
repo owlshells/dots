@@ -62,7 +62,12 @@ fi
 # trying to belong, which is the point. Grey de-emphasises the error parens so
 # the exit code itself is what the eye lands on.
 : ${VINNY_ALERT:=#FF2D2D}
-: ${VINNY_DIM:=242}
+# 245, not 242. The terminal background moved from #1b1526 to a neutral #282828,
+# which cost every foreground some contrast; 242 fell to 2.81:1, under the 3:1
+# floor, for text that is meant to be quiet rather than unreadable. 245 restores
+# 4.27:1 and still reads as clearly subordinate. context.zsh and hosts.zsh carry
+# the same value as a literal -- keep the three in step.
+: ${VINNY_DIM:=245}
 
 # $fg[] / $reset_color above; __git_ps1 below. Upstream gets the latter from
 # the oh-my-zsh gitfast plugin; Debian/Kali ship it with git itself.
