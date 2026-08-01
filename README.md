@@ -17,6 +17,15 @@ git clone git@github.com:owlshells/dots.git ~/dots
 exec zsh
 ```
 
+`install.sh` also sets the desktop look, because this repo owns what the box
+looks like and the deploy scripts own what is installed on it: the owl behind
+kitty (`terminal/mkowl.py` renders it from a tracked mask) and the wallpaper
+(`terminal/wallpaper.png`, written into `~/.fehbg` for i3 to run at session
+start). Both self-disable where the thing they hook into is missing — kitty for
+one, feh for the other, so neither fires on a headless box — and neither
+overrules a background or a kitty.conf you set yourself. `--no-terminal` skips
+both on a box that has them and doesn't want them.
+
 Optional:
 
 ```bash

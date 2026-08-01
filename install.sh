@@ -2,7 +2,7 @@
 # install.sh — symlink dots into place. Idempotent; backs up anything real.
 #
 #   --no-tmux      leave ~/.tmux.conf alone
-#   --no-terminal  skip the kitty background image
+#   --no-terminal  skip the kitty background image and the wallpaper
 #
 # --no-tmux exists for hosts whose tmux config is owned by something else and is
 # purpose-built for that host — kali-deploy-remote writes a headless SSH config
@@ -10,9 +10,10 @@
 # that without it the symlink would also mean any tool doing `cat > ~/.tmux.conf`
 # writes straight into this repo.
 #
-# --no-terminal skips the owl. It is already a no-op on a box with no kitty --
-# every headless box, which is most of them -- so the flag is for a box that has
-# kitty and does not want it.
+# --no-terminal skips the owl and the desktop wallpaper. Both are already no-ops
+# on a box that lacks the thing they hook into -- kitty for the owl, feh for the
+# wallpaper, neither of which is on a headless box -- so the flag is for a box
+# that has them and does not want the look.
 set -euo pipefail
 
 DOTFILES="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -136,6 +137,49 @@ KITTYHOOK
     echo "hook  owl ($tint) -> $kconf"
 }
 [ "$NO_TERMINAL" -eq 1 ] && echo "skip  owl (--no-terminal)" || hook_kitty
+
+# The desktop wallpaper. Lives here rather than in the deploy script for the same
+# reason the owl does: this repo owns what the box looks like, and the deploy
+# scripts own what is installed on it. They already split that way -- the deploy
+# installs kitty and writes kitty.conf, this appends the owl to it; the deploy
+# installs feh and has i3 run ~/.fehbg at session start, this decides what
+# ~/.fehbg points at.
+#
+# ~/.fehbg is written directly rather than by running `feh --bg-fill`, because
+# feh needs a live X display to set a background and install.sh is routinely run
+# from a TTY, over SSH, or mid-deploy with no session at all. The file is just a
+# shell script that calls feh; i3 executes it when the session starts, and feh
+# rewrites it whenever you set a different background later -- so this is the
+# same handoff without the requirement to be inside X when it happens.
+#
+# Only written when absent: it is the default, and a re-run must not overrule a
+# background you picked yourself.
+#
+# The feh check makes this self-disabling on every headless box, the same way the
+# kitty check does for the owl -- feh is in kali-deploy-physical's package list
+# and not in the remote's, so nothing here needs to know which box it is on.
+hook_wallpaper() {
+    local img="$DOTFILES/terminal/wallpaper.png"
+    local fehbg="$HOME/.fehbg"
+
+    command -v feh >/dev/null 2>&1 || { echo "skip  wallpaper (no feh on this box)"; return; }
+    [ -f "$img" ] || { echo "skip  wallpaper (terminal/wallpaper.png missing)"; return; }
+    if [ -e "$fehbg" ]; then
+        echo "ok    ~/.fehbg already set (leaving your background alone)"
+        return
+    fi
+
+    cat > "$fehbg" <<FEHBG
+#!/bin/sh
+# Written by dots/install.sh. i3 runs this at session start.
+# Change the background with:  feh --bg-fill /path/to/image
+# feh rewrites this file when you do, so there is nothing here to edit.
+feh --no-fehbg --bg-fill '$img'
+FEHBG
+    chmod 755 "$fehbg"
+    echo "hook  wallpaper -> $fehbg"
+}
+[ "$NO_TERMINAL" -eq 1 ] && echo "skip  wallpaper (--no-terminal)" || hook_wallpaper
 
 # Make bin scripts executable
 chmod +x "$DOTFILES"/bin/* 2>/dev/null || true

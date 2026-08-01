@@ -83,11 +83,38 @@ ok "$(readlink -f "$SANDBOX/.bash_aliases")" "$here/shell/bash_aliases" \
    "but the bash hook still lands"
 rm -rf "$SANDBOX"
 
+sect "the wallpaper"
+# feh is what the hook keys on, so a box without it must be a clean skip rather
+# than a stray ~/.fehbg -- that is what keeps this a no-op on every headless box
+# without install.sh needing to know which box it is on.
+new_home
+# No feh on PATH here -- run_install does not add one.
+out="$(run_install 2>&1)"
+yes_ "$(printf '%s' "$out" | grep -q 'skip  wallpaper (no feh'; echo $?)" \
+     "no feh on the box -> clean skip"
+yes_ "$([ ! -e "$SANDBOX/.fehbg" ]; echo $?)" "and no ~/.fehbg left behind"
+rm -rf "$SANDBOX"
+
+new_home
+fakebin="$SANDBOX/bin"; mkdir -p "$fakebin"
+printf '#!/bin/sh\nexit 0\n' > "$fakebin/feh"; chmod +x "$fakebin/feh"
+out="$( HOME="$SANDBOX" XDG_DATA_HOME= XDG_CONFIG_HOME= PATH="$fakebin:$PATH" "$install" 2>&1 )"
+yes_ "$([ -x "$SANDBOX/.fehbg" ]; echo $?)" "with feh present, ~/.fehbg is written and executable"
+yes_ "$(grep -q "$here/terminal/wallpaper.png" "$SANDBOX/.fehbg"; echo $?)" \
+     "and points at the checkout's wallpaper"
+# A background you chose yourself must survive a re-run.
+printf '#!/bin/sh\nfeh --bg-fill /my/own.png\n' > "$SANDBOX/.fehbg"; chmod +x "$SANDBOX/.fehbg"
+out="$( HOME="$SANDBOX" XDG_DATA_HOME= XDG_CONFIG_HOME= PATH="$fakebin:$PATH" "$install" 2>&1 )"
+yes_ "$(grep -q '/my/own.png' "$SANDBOX/.fehbg"; echo $?)" "a background you set yourself is not overruled"
+rm -rf "$SANDBOX"
+
 sect "--no-terminal and --help"
 new_home
 out="$(run_install --no-terminal 2>&1)"; rc=$?
 ok "$rc" "0" "--no-terminal exits 0"
 yes_ "$(printf '%s' "$out" | grep -q 'skip  owl'; echo $?)" "and says it skipped the owl"
+yes_ "$(printf '%s' "$out" | grep -q 'skip  wallpaper (--no-terminal'; echo $?)" \
+     "and skipped the wallpaper too"
 out="$(run_install --help 2>&1)"; rc=$?
 ok "$rc" "0" "--help exits 0"
 yes_ "$(printf '%s' "$out" | grep -q 'no-tmux'; echo $?)" "and documents the flags"
