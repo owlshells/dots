@@ -143,11 +143,32 @@ Known misses, by design: a purely numeric password is indistinguishable from a
 port, `mysql -p<pass>` from a flag bundle, and an unlisted tool's bare `-p`
 from anything else. `RT_REDACT=0` disables the whole thing.
 
-One rule is not about command lines at all. A dumped hash table —
-`Administrator:500:<lm>:<nt>:::` — is *output*, and it reaches disk through tmux
-pane logging rather than through argv. The hashes are replaced; the account name
-and RID are kept on purpose, because which accounts you dumped is the finding you
-write up.
+Some rules are not about command lines at all. A dumped hash table, a Responder
+capture, a roasted ticket — these are *output*, and they reach disk through tmux
+pane logging rather than through argv. Each keeps the half that is the finding
+and masks only the crackable half:
+
+| Shape | Kept | Masked |
+|---|---|---|
+| `Administrator:500:<lm>:<nt>:::` | account, RID | both hashes |
+| `svc::CORP:<challenge>:<response>` | account, domain | the rest |
+| `$krb5tgs$` `$krb5asrep$` `$krb5pa$` `$DCC2$` | principal, realm | the hash runs |
+| `krbtgt:aes256-cts-hmac-sha1-96:<key>` | principal, etype | the key |
+| `* Password : hunter2` | the label, and `(null)` | the value |
+| `-----BEGIN … PRIVATE KEY-----` | the markers | every body line |
+
+Which accounts you dumped, which principals you roasted and which etypes exist
+are all things you write up; the material hashcat wants is not.
+
+An IPv6 address has the same field shape as a NetNTLM hash — a name, `::`, then
+hex groups — so that rule additionally requires a 32-character hex run, which an
+IPv6 group (four characters at most) cannot produce. `ping6 fe80::215:5dff:fe00:1`
+survives untouched, and the suite asserts it.
+
+The private key block is the one rule the live path does not have: `redact.zsh`
+is handed a single command line and cannot know it is inside a block. The scrub
+path does it, preserving the line count while it does, because `scrub-logs.sh`
+rejoins prefixes to bodies by line number.
 
 Anything already logged before this existed:
 

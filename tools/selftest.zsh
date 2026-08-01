@@ -363,6 +363,14 @@ print -rl -- \
   'Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::' \
   'CORP.LOCAL\svc:1104:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::' \
   '[*] Dumping local SAM hashes (uid:rid:lmhash:nthash)' \
+  'svc::CORP:1122334455667788:8f3ea1b2c3d4e5f60718293a4b5c6d7e:0101000000000000c065' \
+  'ping6 fe80::215:5dff:fe00:1' 'ssh -6 svc@fe80::1' \
+  '$krb5tgs$23$*svc$CORP.LOCAL$http/web*$a1b2c3d4e5f60718293a4b5c6d7e8f90$deadbeefcafebabe1234567890abcdef' \
+  '$krb5asrep$23$svc@CORP.LOCAL:9f8e7d6c5b4a39281706f5e4d3c2b1a0$fedcba9876543210fedcba9876543210' \
+  '$DCC2$10240#svc#a1b2c3d4e5f60718293a4b5c6d7e8f90' \
+  'krbtgt:aes256-cts-hmac-sha1-96:9f4c2a1b3d5e7f8091a2b3c4d5e6f7081920304050607080' \
+  'svc:des-cbc-md5:1a2b3c4d5e6f7081' \
+  '    * Password : hunter2 with spaces' '    * Password : (null)' \
   > $_corpus
 typeset -g _z=$(while IFS= read -r l; do _rt_redact "$l"; done < $_corpus)
 typeset -g _a=$(rt-redact < $_corpus)
@@ -372,6 +380,37 @@ else
     fail_lines=$(diff <(print -r -- "$_z") <(print -r -- "$_a") | head -8)
     ok "$fail_lines" "" "implementations diverge"
 fi
+
+t "redaction: the shapes that only ever appear as output"
+# These reach disk through tmux pane logging rather than through argv, so they
+# are the pane log's whole exposure. Each keeps the half that is the finding.
+ok "$(_rt_redact 'svc::CORP:1122334455667788:8f3ea1b2c3d4e5f60718293a4b5c6d7e:0101000000c065')" \
+   'svc::CORP:{{redacted}}' "NetNTLMv2 keeps the account and domain"
+ok "$(_rt_redact 'ping6 fe80::215:5dff:fe00:1')" 'ping6 fe80::215:5dff:fe00:1' \
+   "an IPv6 address is not mistaken for one"
+ok "$(_rt_redact '$DCC2$10240#svc#a1b2c3d4e5f60718293a4b5c6d7e8f90')" \
+   '$DCC2$10240#svc#{{redacted}}' "a cached-credential hash keeps its principal"
+ok "$(_rt_redact 'krbtgt:aes256-cts-hmac-sha1-96:9f4c2a1b3d5e7f8091a2b3c4d5e6f7081920304050607080')" \
+   'krbtgt:aes256-cts-hmac-sha1-96:{{redacted}}' "a kerberos key keeps its etype"
+ok "$(_rt_redact '    * Password : hunter2 with spaces')" '    * Password : {{redacted}}' \
+   "mimikatz cleartext goes, spaces and all"
+ok "$(_rt_redact '    * Password : (null)')" '    * Password : (null)' \
+   "but (null) stays -- it is the finding, not the secret"
+
+t "redaction: private key blocks (scrub path only)"
+# The one deliberate asymmetry: redact.zsh sees a single command line and cannot
+# know it is inside a block. Line count must survive, because scrub-logs.sh
+# rejoins prefixes to bodies by line number.
+typeset -g _keyin=$OPS/key.txt _keyout=$OPS/key.out
+print -rl -- 'cat ~/.ssh/id_rsa' '-----BEGIN OPENSSH PRIVATE KEY-----' \
+    'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAABlwAAAAdzc2gt' \
+    'cnNhAAAAAwEAAQAAAYEAy8Dbv8prpJ/0kKhlGeJYozo2t60EG8L0561g13R29LvMR5hy' \
+    '-----END OPENSSH PRIVATE KEY-----' 'ls -la' > $_keyin
+rt-redact < $_keyin > $_keyout
+ok "$(wc -l < $_keyout)" "$(wc -l < $_keyin)" "line count survives the block"
+ok "$(grep -c 'b3BlbnNzaC1r\|cnNhAAAAAwEAAQ' $_keyout)" "0" "no key material survives"
+has "$(cat $_keyout)" '-----BEGIN OPENSSH PRIVATE KEY-----' "the markers are kept"
+ok "$(sed -n '6p' $_keyout)" 'ls -la' "and the line after the block is untouched"
 
 t "redaction: the write path actually applies it"
 : > $RT_CMD_INDEX; _rt_recall_mem=()

@@ -89,12 +89,25 @@ _rt_redact_r() {
     (( RT_REDACT )) || return
     setopt local_options extended_glob
     local m=$RT_REDACT_MARK
-    local -a words out
-    words=( ${(z)1} ) || return
 
-    # Declared local so the (#b) backreference substitution below does not
+    # Declared local so the (#b) backreference substitutions below do not
     # create them globally and clobber whatever the operator had in $match.
     local -a match mbegin mend
+
+    # 0. mimikatz / LSA cleartext -- `* Password : hunter2`
+    #
+    # A line rule, and the only one that fires before tokenising, because the
+    # value is prose: a cleartext password may contain spaces, so the whole tail
+    # after the colon is the secret and word-splitting would only find part of
+    # it. `(null)` is mimikatz reporting that there was nothing to dump, which is
+    # a finding in itself -- masking it would hide the useful half.
+    if [[ $1 == (#b)([[:space:]]#(|\*[[:space:]]##)Password[[:space:]]#:[[:space:]]##)(*) ]]; then
+        [[ -n $match[3] && $match[3] != '(null)' ]] && REPLY="$match[1]$m"
+        return
+    fi
+
+    local -a words out
+    words=( ${(z)1} ) || return
     # The effective command, with wrappers and leading VAR=val peeled off, so
     # `sudo proxychains nxc ...` is still recognised as nxc.
     local cmd="" pw_short=0 w prev="" name val q
@@ -155,6 +168,38 @@ _rt_redact_r() {
         # the finding you write up, and only the hashes are the secret.
         if [[ $w == (#b)([^:[:space:]]##):(<->):([0-9a-fA-F](#c16,)):([0-9a-fA-F](#c16,))(*) ]]; then
             out+=( "$match[1]:$match[2]:$m:$m$match[5]" ); prev=$w; continue
+        fi
+        # 6. NetNTLMv1/v2 -- user::DOMAIN:challenge:response[:blob]
+        #
+        # What Responder and ntlmrelayx print, and the single most likely secret
+        # to be sitting in a pane log. Crackable offline, so it is a credential.
+        # The account and domain are kept: who authenticated is the finding.
+        #
+        # The long-hex requirement is what keeps IPv6 out of this. `fe80::215:
+        # 5dff:fe00:1` matches the field shape exactly -- name, ::, then hex
+        # groups -- and an address in a log must survive untouched. NetNTLM
+        # responses are 32 hex characters at the very shortest; an IPv6 group is
+        # at most four, so the runs cannot be confused.
+        if [[ $w == (#b)([^:[:space:]]##)::([^:[:space:]]##):(*) ]] \
+           && [[ $match[3] == *[0-9a-fA-F](#c32,)* ]]; then
+            out+=( "$match[1]::$match[2]:$m" ); prev=$w; continue
+        fi
+        # 7. Kerberos crackables -- $krb5tgs$, $krb5asrep$, $krb5pa$, $DCC2$
+        #
+        # Every one of these is a hash format with the principal in the header
+        # and the crackable material at the end, so masking the long hex runs
+        # inside the token keeps `$krb5tgs$23$*svc$CORP.LOCAL$` -- the account you
+        # roasted, which is the finding -- and drops the part hashcat wants.
+        if [[ $w == (\$krb5*|\$DCC2\$*) ]]; then
+            out+=( "${w//(#b)[0-9a-fA-F](#c32,)/$m}" ); prev=$w; continue
+        fi
+        # 8. secretsdump Kerberos keys -- principal:aes256-cts-hmac-sha1-96:<key>
+        #
+        # Emitted by `-just-dc` alongside the pwdump table. The algorithm is kept
+        # because which etypes a principal has is worth reading back; the key is
+        # a credential in the same way the NT hash is.
+        if [[ $w == (#b)([^:[:space:]]##):(aes[0-9]##-cts-[^:[:space:]]##|des-cbc-md5|des3-cbc-sha1|rc4_hmac[^:[:space:]]#|arcfour-hmac[^:[:space:]]#):([0-9a-fA-F](#c16,))(*) ]]; then
+            out+=( "$match[1]:$match[2]:$m$match[4]" ); prev=$w; continue
         fi
         out+=( "$w" ); prev=$w
     done

@@ -115,6 +115,69 @@ function mask_colon_at(s,   at, pre, rest) {
     if (match(pre, /:[^:@ \t]*$/)) return substr(pre, 1, RSTART) mark rest
     return s
 }
+# NetNTLMv1/v2 — user::DOMAIN:challenge:response[:blob]. Mirrors rule 6.
+# Keeps account and domain; the long-hex test is what stops an IPv6 address,
+# whose groups are four hex characters at most, from matching the same shape.
+function has_long_hex(s) { return (s ~ /[0-9a-fA-F]{32,}/) }
+function mask_netntlm(s) {
+    if (match(s, /^[^:[:space:]]+::[^:[:space:]]+:/))
+        return substr(s, 1, RSTART + RLENGTH - 1) mark
+    return s
+}
+# Kerberos crackables — $krb5tgs$ $krb5asrep$ $krb5pa$ $DCC2$. Mirrors rule 7.
+# The principal lives in the header and the crackable material at the end, so
+# masking the long hex runs keeps the account and drops what hashcat wants.
+function mask_krb(s,   out, rest) {
+    out = ""; rest = s
+    while (match(rest, /[0-9a-fA-F]{32,}/)) {
+        out = out substr(rest, 1, RSTART - 1) mark
+        rest = substr(rest, RSTART + RLENGTH)
+    }
+    return out rest
+}
+# secretsdump kerberos keys — principal:aes256-cts-hmac-sha1-96:<key>. Rule 8.
+function is_krb_etype(a) {
+    return (a ~ /^aes[0-9]+-cts-[^:[:space:]]+$/ || a == "des-cbc-md5" ||
+            a == "des3-cbc-sha1" || a ~ /^rc4_hmac[^:[:space:]]*$/ ||
+            a ~ /^arcfour-hmac[^:[:space:]]*$/)
+}
+function mask_krb_key(s,   a, n, j, res) {
+    n = split(s, a, ":")
+    if (n < 3)                  return s
+    if (!is_krb_etype(a[2]))    return s
+    if (!is_hash_value(a[3]))   return s
+    a[3] = mark
+    res = a[1]
+    for (j = 2; j <= n; j++) res = res ":" a[j]
+    return res
+}
+# Private key blocks. The scrub path only: shell/zsh/redact.zsh is handed one
+# command line at a time and has no way to know it is inside a block, so this is
+# the one deliberate asymmetry between the two engines, and the shared corpus in
+# tools/selftest.zsh does not carry it.
+#
+# The BEGIN/END markers are kept and every body line becomes one mark line. That
+# is not cosmetic: tools/scrub-logs.sh splits each file into prefixes and bodies
+# and rejoins them by line number, so a rule that collapsed a 40-line key into
+# one line would misalign every following line in the file. One line in, one
+# line out.
+/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/ { inkey = 1; print; fflush(); next }
+inkey && /-----END [A-Z0-9 ]*PRIVATE KEY-----/ { inkey = 0; print; fflush(); next }
+inkey { print mark; fflush(); next }
+
+# mimikatz / LSA cleartext — `* Password : hunter2`. Mirrors rule 0.
+# A line rule, because a cleartext password may contain spaces and tokenising
+# would only find the first word of it. `(null)` is mimikatz reporting nothing
+# was there, which is half the finding, so it is kept.
+match($0, /^[[:space:]]*\*?[[:space:]]*Password[[:space:]]*:[[:space:]]+/) {
+    val = substr($0, RSTART + RLENGTH)
+    if (val != "" && val != "(null)") {
+        print substr($0, 1, RSTART + RLENGTH - 1) mark
+        fflush()
+        next
+    }
+}
+
 {
     n = tokenize($0, w)
     pw_short = is_pw_tool(eff_cmd(w, n))
@@ -141,6 +204,12 @@ function mask_colon_at(s,   at, pre, rest) {
             cur = mask_colon_at(w[i])
         } else if (w[i] ~ /^[^:[:space:]]+:[0-9]+:[0-9a-fA-F]{16,}:[0-9a-fA-F]{16,}/) {
             cur = mask_pwdump(w[i])
+        } else if (w[i] ~ /^[^:[:space:]]+::[^:[:space:]]+:/ && has_long_hex(w[i])) {
+            cur = mask_netntlm(w[i])
+        } else if (w[i] ~ /^\$krb5/ || w[i] ~ /^\$DCC2\$/) {
+            cur = mask_krb(w[i])
+        } else if (w[i] ~ /^[^:[:space:]]+:[a-z0-9_-]+:[0-9a-fA-F]{16,}/) {
+            cur = mask_krb_key(w[i])
         }
         out = (out == "" ? cur : out " " cur)
         prev = w[i]
