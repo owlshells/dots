@@ -1,0 +1,19 @@
+# Fixture for tools/selftest.zsh — a stage-one `scan` result (nmap -p-).
+# Trimmed to the shapes the port extraction has to get right: open TCP ports,
+# a closed one, a filtered one, and a UDP line that must not be picked up.
+# Nmap 7.95 scan initiated Mon Jul 20 09:01:02 2026 as: nmap -Pn -T4 -p- -oN allports.nmap 10.10.11.42
+Nmap scan report for boxy.htb (10.10.11.42)
+Host is up (0.021s latency).
+Not shown: 65529 closed tcp ports (reset)
+
+PORT      STATE    SERVICE
+22/tcp    open     ssh
+80/tcp    open     http
+139/tcp   open     netbios-ssn
+445/tcp   open     microsoft-ds
+3306/tcp  closed   mysql
+5985/tcp  open     wsman
+8080/tcp  filtered http-proxy
+53/udp    open     domain
+
+# Nmap done at Mon Jul 20 09:03:40 2026 -- 1 IP address (1 host up) scanned in 158.22 seconds

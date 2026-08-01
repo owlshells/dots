@@ -39,9 +39,16 @@ rejoin() {        # prefixes file, bodies file -> stdout
     awk 'NR==FNR { p[FNR]=$0; next } { print p[FNR] $0 }' "$1" "$2"
 }
 
+# tmux pane logs are in scope too. They are screen *output* rather than command
+# lines, so the argv-shaped rules mostly do not apply to them -- but the pwdump
+# rule does, and a secretsdump run is exactly what lands in one of these. They
+# were excluded here while being the least protected logs on the box: the ledger
+# has been redacted on write since redact.zsh landed, these never were.
 mapfile -t targets < <({
     [ -f "$idx" ] && printf '%s\n' "$idx"
-    find "$ops" -type f \( -name 'commands.log' -o -path '*/cmdlog/*.log' \) 2>/dev/null
+    find "$ops" -type f \( -name 'commands.log' \
+                        -o -path '*/cmdlog/*.log' \
+                        -o -path '*/tmux-logs/*.log' \) 2>/dev/null
 } | sort -u)
 
 (( ${#targets[@]} )) || { echo "scrub: nothing to scrub under $ops"; exit 0; }
@@ -53,8 +60,16 @@ for f in "${targets[@]}"; do
 
     case "$f" in
         *.cmd-index)   # TSV: stamp \t dir \t command
-            cut -f1,2 "$f" | sed 's/$/\t/' > "$pre"
-            cut -f3-  "$f" | "$redact"     > "$body"
+            # A command containing a newline writes continuation lines with no
+            # tabs at all, and `cut` prints such a line whole for *both* halves --
+            # which rejoined it to itself as "source ~/.zshrc<TAB>source ~/.zshrc".
+            # The invariant below caught it and refused to write, so nothing was
+            # ever corrupted, but it also meant the real index could not be
+            # scrubbed at all: the refusal exits before reaching any other file.
+            # Continuations get an empty prefix, as they do in the human log.
+            awk -F'\t' 'NF>=3 { printf "%s\t%s\t\n", $1, $2; next } { print "" }' "$f" > "$pre"
+            awk -F'\t' 'NF>=3 { sub(/^[^\t]*\t[^\t]*\t/, "") } { print }' "$f" \
+                | "$redact" > "$body"
             ;;
         *)
             split_prefix  "$f"              > "$pre"

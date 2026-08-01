@@ -93,6 +93,21 @@ function is_secret_name(n) {
     return (toupper(n) ~ /^(P|PW|PASS|PASSWD|PASSWORD|TOKEN|SECRET|APIKEY|API_KEY|AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|DOTS_TOKEN)$/)
 }
 # domain/user:secret@target — impacket specs and credentialed URLs
+# pwdump format — user:rid:lmhash:nthash:::  Mirrors rule 5 in redact.zsh. The
+# only rule that is not about a command line: secretsdump and friends emit this
+# as output, and it reaches disk through tmux pane logging. Name and RID are kept
+# deliberately; which accounts were dumped is the finding, the hashes are the
+# secret. `j` is a parameter, not a global — the main loop uses `i`.
+function mask_pwdump(s,   a, n, j, res) {
+    n = split(s, a, ":")
+    if (n < 4)                                  return s
+    if (a[2] !~ /^[0-9]+$/)                     return s
+    if (!is_hash_value(a[3]) || !is_hash_value(a[4])) return s
+    a[3] = mark; a[4] = mark
+    res = a[1]
+    for (j = 2; j <= n; j++) res = res ":" a[j]
+    return res
+}
 function mask_colon_at(s,   at, pre, rest) {
     at = index(s, "@")
     if (at < 2) return s
@@ -124,6 +139,8 @@ function mask_colon_at(s,   at, pre, rest) {
             cur = substr(cur, 1, index(cur, "%")) mark q         # smbclient user%pass
         } else if (w[i] ~ /:[^:@ \t]+@/) {
             cur = mask_colon_at(w[i])
+        } else if (w[i] ~ /^[^:[:space:]]+:[0-9]+:[0-9a-fA-F]{16,}:[0-9a-fA-F]{16,}/) {
+            cur = mask_pwdump(w[i])
         }
         out = (out == "" ? cur : out " " cur)
         prev = w[i]
@@ -131,5 +148,9 @@ function mask_colon_at(s,   at, pre, rest) {
     # Only emit the rebuilt line when something was redacted; otherwise print
     # the input verbatim, so whitespace and indentation survive untouched.
     print (index(out, mark) ? out : $0)
+    # Required when this is a live filter on a tmux pipe-pane: awk block-buffers
+    # a pipe, so without the flush a transcript lags by kilobytes and a `tail -f`
+    # shows nothing. Immaterial to the batch path, which is redirected to a file.
+    fflush()
 }
 '

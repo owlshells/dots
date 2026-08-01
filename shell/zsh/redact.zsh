@@ -146,6 +146,16 @@ _rt_redact_r() {
         if [[ $w == *:*@* ]]; then
             out+=( "${w//(#b)(:)([^:@[:space:]]##)(@)/$match[1]$m$match[3]}" ); prev=$w; continue
         fi
+        # 5. pwdump format -- user:rid:lmhash:nthash:::
+        #
+        # The only rule here that is not about a command line. secretsdump, the
+        # SAM/NTDS dump and hashdump all emit this, and it reaches disk through
+        # tmux pane logging, which captures screen output rather than argv. The
+        # account name and RID are kept on purpose: which accounts you dumped is
+        # the finding you write up, and only the hashes are the secret.
+        if [[ $w == (#b)([^:[:space:]]##):(<->):([0-9a-fA-F](#c16,)):([0-9a-fA-F](#c16,))(*) ]]; then
+            out+=( "$match[1]:$match[2]:$m:$m$match[5]" ); prev=$w; continue
+        fi
         out+=( "$w" ); prev=$w
     done
     # Only hand back the rebuilt line if something was actually redacted.

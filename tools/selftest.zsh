@@ -210,6 +210,44 @@ ok  "$(grep -c . $RT_HOSTS_INDEX)" "7" "re-harvesting is idempotent"
 ok  "$(grep -c '^[0-9.]*	[0-9.]*$' $RT_HOSTS_INDEX)" "0" "addresses are never stored as names"
 
 # ==============================================================================
+# guard: the parts that need the host index, so they run after it is populated
+# ==============================================================================
+t "guard: a scope entry it cannot evaluate is a diagnostic, not a verdict"
+# A hostname in scope.txt used to make every address on the line read as out of
+# scope. `target boxy.htb` seeded exactly that, so the guard condemned the box
+# you had just loaded -- and a warning that cries wolf is one you learn to
+# dismiss, which is the failure this whole module is built to avoid.
+TARGET_DIR=$OPS/boxy
+print -rl -- 'boxy.htb' > $TARGET_DIR/scope.txt
+_pin_net tun0
+ok "$(_rt_guard_check 'nmap -p- 10.10.11.42')" "" "an unusable scope file condemns nothing"
+ok "$(_rt_scope_entries $TARGET_DIR/scope.txt)" "" "and offers no usable entries"
+_rt_scope_load $TARGET_DIR/scope.txt
+ok "${_rt_scope_bad[1]}" "boxy.htb" "the entry is recorded as unusable"
+# Reported out of band, once per version of the file -- not on every line.
+_rt_scope_notified=""
+has "$(_rt_scope_nudge)" "1 unusable entry" "the nudge reports it"
+has "$(_rt_scope_nudge)" ""                 "and not a second time for the same file"
+
+print -rl -- '10.10.11.0/24' 'boxy.htb' > $TARGET_DIR/scope.txt
+ok  "$(_rt_guard_check 'nmap 10.10.11.42')" "" "a usable entry still admits what it covers"
+has "$(_rt_guard_check 'nmap 10.10.99.7')" "out of scope" "and still enforces against what it does not"
+
+t "guard: hostnames, resolved through the scan-derived host index"
+# Only names the index knows are considered, so an unknown name cannot produce a
+# warning -- and no DNS lookup happens on the accept-line path.
+print -rl -- '10.10.11.40/30' > $TARGET_DIR/scope.txt
+_rt_hostmap_stamp=""
+ok  "$(_rt_guard_check 'nmap -p- boxy.htb')"  "" "an in-scope name is silent"
+has "$(_rt_guard_check 'nmap -p- dc01.corp.local')" "dc01.corp.local (10.10.11.10)" \
+    "an out-of-scope name warns, and names the address"
+has "$(_rt_guard_check 'curl http://dc01.corp.local:8080/x?a=1')" "dc01.corp.local" \
+    "found inside a url with a port and a query"
+has "$(_rt_guard_check 'ssh svc@dc01.corp.local')" "dc01.corp.local" "and after a user@ prefix"
+ok  "$(_rt_guard_check 'curl https://github.com/x')" "" "a name absent from the index is ignored"
+ok  "$(_rt_guard_check 'vim notes.md')"              "" "a dotted filename is not a hostname"
+
+# ==============================================================================
 # redaction
 # ==============================================================================
 typeset -g LHOST="" RHOST="" DOMAIN="" DC="" U="" P="" HASH="" FILE="" SUBNET="" PORT=""
@@ -264,6 +302,19 @@ has "$(_rt_redact 'nxc ldap dc -u s --password=87654321')"  '{{redacted}}' "nume
 has "$(_rt_redact 'PASSWORD=12345678 ./run.sh')"            'PASSWORD={{redacted}}' "numeric PASSWORD="
 has "$(_rt_redact 'GITHUB_TOKEN=1234567890 gh auth login')" 'GITHUB_TOKEN={{redacted}}' "all-digit token"
 
+t "redaction: pwdump output, the one rule that is not about a command line"
+# tmux pane logging captures screen output, so a dumped hash table reaches disk
+# through a path the argv-shaped rules never see. Name and RID survive on
+# purpose -- which accounts you dumped is the finding you write up.
+ok "$(_rt_redact 'Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::')" \
+   'Administrator:500:{{redacted}}:{{redacted}}:::' "sam dump line keeps the account and rid"
+ok "$(_rt_redact 'CORP.LOCAL\svc:1104:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::')" \
+   'CORP.LOCAL\svc:1104:{{redacted}}:{{redacted}}:::' "ntds dump line with a domain prefix"
+ok "$(_rt_redact 'echo "call at 10:30 or mail bob@corp.com"')" \
+   'echo "call at 10:30 or mail bob@corp.com"' "prose with a colon is not a hash table"
+ok "$(_rt_redact 'ssh -L 8081:10.10.11.5:80 -N svc@10.10.11.42')" \
+   'ssh -L 8081:10.10.11.5:80 -N svc@10.10.11.42' "a port-forward spec is not a hash table"
+
 t "redaction: the ambiguous short flag is gated on the tool"
 # `-p` is a password in netexec and make-parents in mkdir. Found on real logs.
 ok "$(_rt_redact 'sudo mkdir -p /opt/x')" 'sudo mkdir -p /opt/x' "mkdir keeps its path"
@@ -309,6 +360,9 @@ print -rl -- \
   'nxc ldap dc -u s --password 12345678' 'nxc ldap dc -u s --password=87654321' \
   'PASSWORD=12345678 ./run.sh' 'GITHUB_TOKEN=1234567890 gh auth login' \
   'nmap -p 80,443 10.10.11.42' \
+  'Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::' \
+  'CORP.LOCAL\svc:1104:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::' \
+  '[*] Dumping local SAM hashes (uid:rid:lmhash:nthash)' \
   > $_corpus
 typeset -g _z=$(while IFS= read -r l; do _rt_redact "$l"; done < $_corpus)
 typeset -g _a=$(rt-redact < $_corpus)
@@ -366,6 +420,85 @@ RHOST="" DOMAIN="" U="" DC="" LHOST="" _rt_arsenal_sync
 print -r -- 'not json at all' > $RT_ARSENAL_VARS
 RHOST=10.10.11.42 _rt_arsenal_sync
 has "$(_vars)" '"target": "10.10.11.42"' "a corrupt store is replaced, not fatal"
+
+# ==============================================================================
+# the workflow helpers
+#
+# shell/functions.sh had no coverage at all, which is how `fuzz` shipped passing
+# `- ic` to ffuf instead of `-ic` and stayed broken. The helpers that end in an
+# exec are asserted through the RT_DRYRUN seam, which prints the argv one word
+# per line -- so a single argument can be pinned by exact match rather than by a
+# substring that would match the broken form too.
+# ==============================================================================
+typeset -g SECLISTS=/nonexistent-seclists WORDLISTS=/nonexistent-wordlists
+source $RT_DOTFILES/shell/functions.sh
+
+_argv() { RT_DRYRUN=1 "$@" 2>/dev/null }
+_hasword() { (( _t_run++ )); [[ ${${(f)1}[(I)$2]} -gt 0 ]] && print -r -- "  ok    $3" \
+        || { print -r -- "  FAIL  $3"; print -r -- "          no line exactly: ${(qq)2}"
+             print -r -- "          got: ${(qq)1}"; _t_fail=1 }; }
+
+t "fuzz: the argument that was broken for months"
+typeset -g _fz="$(_argv fuzz http://boxy/FUZZ)"
+_hasword "$_fz" '-ic'  "-ic is one word (it was '- ic', two)"
+_hasword "$_fz" 'ffuf' "invokes ffuf"
+_hasword "$_fz" 'http://boxy/FUZZ' "passes the url through"
+ok "${_fz}" "${_fz//$'\n'-$'\n'/}" "no bare '-' argument survives"
+typeset -g _fz2="$(_argv fuzz http://boxy/FUZZ -t 40 -mc 200)"
+_hasword "$_fz2" '-t' "extra args pass through"
+_hasword "$_fz2" '40' "and their values"
+fuzz >/dev/null 2>&1; rc $? 1 "no url is an error"
+
+t "scan: staged nmap"
+typeset -g TARGET_DIR=$OPS/scanbox; mkdir -p $TARGET_DIR/scans
+cp $RT_DOTFILES/tools/fixtures/allports.nmap $TARGET_DIR/scans/allports.nmap
+typeset -g _sc="$(RT_DRYRUN=1 scan 10.10.11.42 2>/dev/null)"
+_hasword "$_sc" '-p-'   "stage one sweeps all ports"
+_hasword "$_sc" '-sCV'  "stage two runs the service scripts"
+has "$_sc" '-p22,80,139,445,5985' "only the open tcp ports reach stage two"
+ok "${_sc[(I)53]}" "0" "the udp line is not scraped as a tcp port"
+scan 2>/dev/null >/dev/null; rc $? 1 "no target is an error"
+
+t "target: validation"
+for bad in 'RHOST=10.0.0.1' './x' '../x' 'a/b'; do
+    target "$bad" >/dev/null 2>&1; rc $? 1 "rejected: ${(qq)bad}"
+done
+# An empty argument is not a rejection: it is indistinguishable from no argument
+# at all, which is the documented "show me what is loaded" form.
+has "$(target '')" "RHOST=" "an empty argument shows status, as no argument does"
+
+t "target: scaffolding"
+typeset -g TARGET_NAME="" RT_CMDLOG=""
+target 10.10.11.42 newbox >/dev/null
+ok "$RHOST"      "10.10.11.42"          "RHOST set"
+ok "$TARGET_DIR" "$OPS/newbox"          "TARGET_DIR under \$OPS"
+ok "$RT_CMDLOG"  "$OPS/newbox/notes/commands.log" "the ledger points at the box"
+for d in scans loot exploit notes www; do
+    [[ -d $OPS/newbox/$d ]] && rc 0 0 "created $d/" || rc 1 0 "created $d/"
+done
+
+t "target: seeds a scope file the guard can actually evaluate"
+# `target boxy.htb` used to write the hostname verbatim, and the guard then read
+# every address on the line as out of scope -- crying wolf on the box you had
+# just loaded. A name is resolved, and an unresolvable one seeds no entry at all.
+ok "$(_rt_scope_entries $OPS/newbox/scope.txt)" "10.10.11.42" "an address seeds itself"
+target nonexistent.invalid ghost >/dev/null
+ok "$(_rt_scope_entries $OPS/ghost/scope.txt)" "" "an unresolvable name seeds no entry"
+has "$(<$OPS/ghost/scope.txt)" "did not resolve" "but says why, in a comment"
+_pin_net tun0
+TARGET_DIR=$OPS/ghost
+ok "$(_rt_guard_check 'nmap -p- 10.10.11.42')" "" "so the guard stays inert rather than crying wolf"
+
+t "encoders"
+ok "$(b64 'hello world')"        "aGVsbG8gd29ybGQ=" "b64 of an argument"
+ok "$(ub64 'aGVsbG8gd29ybGQ=')" "hello world"      "ub64 round-trips"
+ok "$(print -n 'hello world' | b64)" "aGVsbG8gd29ybGQ=" "b64 from stdin"
+ok "$(urlenc 'a b&c=d/e')"      "a%20b%26c%3Dd/e"  "urlenc"
+
+t "note: appends to the box's notes"
+TARGET_DIR=$OPS/newbox
+note "creds in config.php" >/dev/null
+has "$(<$OPS/newbox/notes/README.md)" "creds in config.php" "the line lands"
 
 print -r -- ""
 if (( _t_fail )); then print -r -- "FAILED  ($_t_run checks)"; else print -r -- "all pass ($_t_run checks)"; fi

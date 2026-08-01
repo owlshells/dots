@@ -13,6 +13,20 @@
 # packaged command library, on ^X^S. It has the same {{placeholder}} grammar,
 # several times the content, and somebody else maintains it.
 
+# --- _rt_run: the seam that makes the exec'ing helpers testable ----------------
+# The helpers below end by handing off to nmap/ffuf/nc, so calling one in a test
+# means scanning something. Routing the handoff through here gives a dry-run
+# mode that prints the argv instead — one word per line, so an assertion can pin
+# a single argument exactly. `fuzz` shipped for months passing `- ic` to ffuf
+# instead of `-ic`, which is precisely the class of mistake this catches.
+_rt_run() {
+    if [ -n "${RT_DRYRUN:-}" ]; then
+        printf '%s\n' "$@"
+    else
+        "$@"
+    fi
+}
+
 # --- lhost: your attack IP (prefers VPN tun0, falls back to eth0) --------------
 # Usage: lhost            -> prints and exports $LHOST
 #        lhost eth0       -> force an interface
@@ -38,13 +52,13 @@ lhost() {
 # Usage: target 10.10.11.42 [name]
 #        target                 -> show current $RHOST / workdir
 target() {
-    if [ -z "$1" ]; then
+    if [ -z "${1:-}" ]; then
         echo "RHOST=${RHOST:-<unset>}  name=${TARGET_NAME:-<unset>}  dir=${TARGET_DIR:-<unset>}"
         return 0
     fi
     # Validate before creating anything. `target RHOST=10.0.0.1` used to be
     # accepted verbatim and would happily mkdir ~/ops/RHOST=10.0.0.1.
-    case "$1" in
+    case "${1:-}" in
         *=*|*/*|.*|"")
             echo "target: '$1' is not an address or hostname" >&2
             echo "usage: target <ip|hostname> [name]" >&2
@@ -57,8 +71,30 @@ target() {
     mkdir -p "$TARGET_DIR"/{scans,loot,exploit,notes,www}
     # Arm the scope guard with the box you just named. Widen it with `scope add`;
     # until a scope file exists the guard has nothing to enforce and stays quiet.
-    [ -f "$TARGET_DIR/scope.txt" ] || printf '# scope for %s — widen with `scope add <cidr>`\n%s\n' \
-        "$TARGET_NAME" "$RHOST" > "$TARGET_DIR/scope.txt"
+    #
+    # The seed has to be an address. Writing $RHOST verbatim meant `target
+    # boxy.htb` seeded a hostname, which the guard cannot evaluate -- and it then
+    # read every address on the line as out of scope, crying wolf on the very box
+    # you had just loaded. So resolve a name first, and if it does not resolve,
+    # write a comment-only file: no entry at all leaves the guard inert, which is
+    # honest, where an entry that can never match is worse than useless.
+    if [ ! -f "$TARGET_DIR/scope.txt" ]; then
+        local _rt_seed=""
+        case "$RHOST" in
+            *[!0-9.]*|"") _rt_seed=$(getent ahostsv4 "$RHOST" 2>/dev/null | awk 'NR==1{print $1}') ;;
+            *)            _rt_seed="$RHOST" ;;
+        esac
+        {
+            printf '# scope for %s — widen with `scope add <cidr>`\n' "$TARGET_NAME"
+            if [ -n "$_rt_seed" ] && [ "$_rt_seed" != "$RHOST" ]; then
+                printf '%s   # %s\n' "$_rt_seed" "$RHOST"
+            elif [ -n "$_rt_seed" ]; then
+                printf '%s\n' "$_rt_seed"
+            else
+                printf '# %s did not resolve — add its address with `scope add`\n' "$RHOST"
+            fi
+        } > "$TARGET_DIR/scope.txt"
+    fi
     [ -f "$TARGET_DIR/notes/README.md" ] || cat > "$TARGET_DIR/notes/README.md" <<EOF
 # $TARGET_NAME ($RHOST)
 
@@ -80,7 +116,7 @@ serve() {
     local port="${1:-8000}"
     [ -n "$LHOST" ] || lhost >/dev/null
     echo "serving $(pwd) on http://${LHOST:-0.0.0.0}:${port}/"
-    python3 -m http.server "$port"
+    _rt_run python3 -m http.server "$port"
 }
 
 # --- smbserve: quick anonymous SMB share (impacket) ----------------------------
@@ -89,7 +125,7 @@ smbserve() {
     local share="${1:-share}" dir="${2:-$(pwd)}"
     [ -n "$LHOST" ] || lhost >/dev/null
     echo "SMB share //${LHOST}/${share} -> ${dir}  (Ctrl-C to stop)"
-    impacket-smbserver -smb2support "$share" "$dir"
+    _rt_run impacket-smbserver -smb2support "$share" "$dir"
 }
 
 # --- listen: upgraded reverse-shell catcher ------------------------------------
@@ -100,13 +136,13 @@ listen() {
     local port="${1:-4444}"
     if command -v penelope >/dev/null; then
         echo "[penelope] listening on :$port  (auto TTY upgrade + session logging)"
-        penelope -p "$port"
+        _rt_run penelope -p "$port"
     elif command -v rlwrap >/dev/null; then
         echo "[rlwrap nc] listening on :$port"
-        rlwrap nc -lvnp "$port"
+        _rt_run rlwrap nc -lvnp "$port"
     else
         echo "[nc] listening on :$port  (install penelope/rlwrap for a better shell)"
-        nc -lvnp "$port"
+        _rt_run nc -lvnp "$port"
     fi
 }
 
@@ -117,27 +153,29 @@ scan() {
     [ -n "$ip" ] || { echo "scan: no target (set RHOST or pass an IP)" >&2; return 1; }
     local out="${TARGET_DIR:-.}/scans"; mkdir -p "$out"
     echo "[*] fast scan $ip ..."
-    nmap -Pn -T4 --min-rate 1000 -p- -oN "$out/allports.nmap" "$ip"
+    _rt_run nmap -Pn -T4 --min-rate 1000 -p- -oN "$out/allports.nmap" "$ip"
     local p
-    p=$(grep -oP '^\d+(?=/tcp\s+open)' "$out/allports.nmap" | paste -sd, -)
+    p=$(grep -oP '^\d+(?=/tcp\s+open)' "$out/allports.nmap" 2>/dev/null | paste -sd, -)
     [ -z "$p" ] && { echo "[!] no open TCP ports found"; return 0; }
     echo "[*] service/script scan on: $p"
-    nmap -Pn -sCV -p"$p" -oN "$out/services.nmap" "$ip"
+    _rt_run nmap -Pn -sCV -p"$p" -oN "$out/services.nmap" "$ip"
     echo "[+] results in $out/"
 }
 
 # --- fuzz: ffuf directory fuzz with a sane default wordlist ---------------------
 # Usage: fuzz http://host/FUZZ [extra ffuf args...]
 fuzz() {
-    [ -n "$1" ] || { echo "fuzz: usage: fuzz http://host/FUZZ [args]" >&2; return 1; }
+    [ -n "${1:-}" ] || { echo "fuzz: usage: fuzz http://host/FUZZ [args]" >&2; return 1; }
     local wl="$SECLISTS/Discovery/Web-Content/directory-list-2.3-medium.txt"
     [ -f "$wl" ] || wl="$WORDLISTS/dirb/common.txt"
-    ffuf -u "$1" -w "$wl" - ic -c "${@:2}"
+    # `- ic` here instead of `-ic` handed ffuf a bare "-" and a stray "ic" for
+    # months. tools/selftest.zsh now pins this argument by exact match.
+    _rt_run ffuf -u "$1" -w "$wl" -ic -c "${@:2}"
 }
 
 # --- b64 / ub64 / urlenc: quick encoders ---------------------------------------
-b64()    { if [ -n "$1" ]; then printf '%s' "$1" | base64 -w0; echo; else base64 -w0; fi; }
-ub64()   { if [ -n "$1" ]; then printf '%s' "$1" | base64 -d;  echo; else base64 -d; fi; }
+b64()    { if [ -n "${1:-}" ]; then printf '%s' "$1" | base64 -w0; echo; else base64 -w0; fi; }
+ub64()   { if [ -n "${1:-}" ]; then printf '%s' "$1" | base64 -d;  echo; else base64 -d; fi; }
 urlenc() { python3 -c 'import sys,urllib.parse as u;print(u.quote(sys.argv[1] if len(sys.argv)>1 else sys.stdin.read().strip()))' "$@"; }
 
 # --- mythic: drive mythic-cli from anywhere ------------------------------------
@@ -146,7 +184,7 @@ urlenc() { python3 -c 'import sys,urllib.parse as u;print(u.quote(sys.argv[1] if
 mythic() {
     local dir="${MYTHIC_DIR:-$HOME/opt/Mythic}"
     [ -x "$dir/mythic-cli" ] || { echo "mythic-cli not built — run: $RT_DOTFILES/tools/mythic-setup.sh"; return 1; }
-    if [ "$1" = "creds" ]; then
+    if [ "${1:-}" = "creds" ]; then
         echo "url:  https://127.0.0.1:7443"
         echo "user: mythic_admin"
         local p; p=$(sudo grep -E '^MYTHIC_ADMIN_PASSWORD=' "$dir/.env" 2>/dev/null | cut -d= -f2-)

@@ -22,7 +22,8 @@ Optional:
 ```bash
 ~/dots/tools/install-tools.sh      # the CLI tools referenced here
 ~/dots/tools/backfill-index.sh     # seed recall from command logs you already have
-~/dots/tools/selftest.zsh          # 142 checks, no network or engagement needed
+~/dots/tools/selftest.zsh          # logic checks; no network or engagement needed
+~/dots/tools/install-test.sh       # install.sh against a throwaway $HOME
 ~/dots/tools/scrub-logs.sh         # retro-redact secrets from logs already on disk
 ```
 
@@ -65,6 +66,25 @@ with the box you named, so the guard arms itself; widen it with
 it never speaks until it has something to enforce, and it ignores public
 addresses unless your scope actually reaches into that space, so ordinary
 traffic to mirrors and DNS never cries wolf.
+
+Hostnames are checked too, against the names harvested from your own scans (see
+below) — so `nmap dc01.corp.local` is judged on the address that name resolves
+to, with no DNS lookup on the keypress. A name the index has never seen is not
+checked at all, which is what makes it impossible for this to invent a warning.
+
+An entry in `scope.txt` that is not an address or a CIDR cannot be enforced, and
+it is reported as its own thing rather than being allowed to condemn traffic:
+
+```
+⋯ scope.txt: 1 unusable entry, ignored: boxy.htb
+  not an address or cidr — resolve it, then: scope add <ip|cidr>
+```
+
+Once per edit of the file, above the prompt, and it never blocks a command. A
+hostname there used to make *every* address read as out of scope, which meant
+`target boxy.htb` produced a guard that cried wolf on the box you had just
+loaded. `target` now resolves a name before seeding, and writes no entry at all
+if it does not resolve — an inert guard is honest, an unmatchable entry is not.
 
 ### Recall — `^X^R`
 
@@ -123,6 +143,12 @@ Known misses, by design: a purely numeric password is indistinguishable from a
 port, `mysql -p<pass>` from a flag bundle, and an unlisted tool's bare `-p`
 from anything else. `RT_REDACT=0` disables the whole thing.
 
+One rule is not about command lines at all. A dumped hash table —
+`Administrator:500:<lm>:<nt>:::` — is *output*, and it reaches disk through tmux
+pane logging rather than through argv. The hashes are replaced; the account name
+and RID are kept on purpose, because which accounts you dumped is the finding you
+write up.
+
 Anything already logged before this existed:
 
 ```bash
@@ -131,7 +157,10 @@ tools/scrub-logs.sh --dry-run    # then without, to rewrite in place
 
 It keeps a `.prescrub` copy of every file it changes, refuses to write if a
 rewrite would alter a line without redacting it, and leaves every untouched
-line byte-identical.
+line byte-identical. It covers the recall index, every box's
+`notes/commands.log`, the daily global logs, **and the tmux pane transcripts** —
+which are the least protected logs on the box, since the ledger has been
+redacted on write since this landed and those never were.
 
 ### Completion that follows your scans
 
@@ -210,6 +239,16 @@ denv                     # direnv .envrc template for per-engagement creds
 `target` creates a per-box tree under `$OPS` (default `~/ops`). `~/ops` and
 `*.log` are gitignored, so loot and evidence are never committed.
 
+The helpers that end by handing off to a tool (`scan`, `fuzz`, `serve`,
+`smbserve`, `listen`) honour `RT_DRYRUN=1`, which prints the argv they would run
+instead of running it — one word per line. That is how the suite asserts them
+without scanning anything, and it is useful by hand when you want the command
+rather than the effect:
+
+```bash
+RT_DRYRUN=1 scan 10.10.11.42     # both nmap stages, as they would be invoked
+```
+
 ## Layout
 
 | Path | What |
@@ -227,12 +266,19 @@ denv                     # direnv .envrc template for per-engagement creds
 | `shell/zsh/pickers.zsh`  | `^X^S` arsenal-ng, `^X^P` payload paths |
 | `bin/`               | `addhost`, and the renderers fzf shells out to |
 | `tmux/tmux.conf`     | `C-a` prefix, per-pane logging, tun0 in the status bar |
-| `tools/`             | installers, Mythic bootstrap, backfill, selftest |
+| `tools/`             | installers, Mythic bootstrap, backfill, the two test suites |
 
 ## tmux
 
 `prefix + P` (prefix is `C-a`) toggles per-pane logging to `~/ops/tmux-logs/` —
 a transcript of screen output, distinct from the command ledger.
+
+Because it is output rather than argv, on-write redaction does not cover it: a
+`secretsdump` table lands there in cleartext. `tools/scrub-logs.sh` now scrubs
+these transcripts retroactively, and that is the path to trust. `prefix + R`
+additionally toggles a live filter through `bin/rt-redact` for logging started
+after it — opt-in, because most of the argv-shaped rules cannot fire on screen
+output. It lowers exposure; it does not remove it.
 
 ## Uninstall
 
