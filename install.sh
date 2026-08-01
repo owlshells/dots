@@ -145,4 +145,14 @@ mkdir -p "$HOME/ops/tmux-logs"
 
 echo
 echo "done. open a new shell or run:  source ~/.bashrc"
-[ -d "$BACKUP" ] && echo "originals saved in: $BACKUP"
+# An `if`, not `[ -d ... ] && echo`. $BACKUP carries this run's timestamp and is
+# only created when something actually had to be saved, so on a re-run with
+# nothing to back up that AND-list returns 1 -- and being the last statement, it
+# made the whole script exit 1. A clean re-run has always done this; it stayed
+# invisible until tools/install-test.sh started checking the exit code, and even
+# then it only showed when the two runs straddled a second boundary, because
+# otherwise the first run's directory sits at the second run's identical path.
+# An `if` with a false condition returns 0.
+if [ -d "$BACKUP" ]; then
+    echo "originals saved in: $BACKUP"
+fi
