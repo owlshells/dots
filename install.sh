@@ -138,6 +138,48 @@ KITTYHOOK
 }
 [ "$NO_TERMINAL" -eq 1 ] && echo "skip  owl (--no-terminal)" || hook_kitty
 
+# The lock and login screen image. The owl, not the desktop wallpaper: the
+# wallpaper is the Ghost in the Shell card and stays that way, and the two
+# screens you are shut out behind get the bird instead.
+#
+# A finished picture, unlike the terminal owl next door. That one is a bare mask
+# kitty composites over its own background; lightdm and i3lock both want an
+# opaque image at screen proportions, so this one is composited here -- owl
+# centred on #282828, which is the ground every other surface already uses.
+#
+# Not gated on kitty, unlike hook_kitty: nothing about a lock screen needs a
+# terminal to exist. Only Pillow, and generated at 2560x1440 so it scales down
+# to a 1080p panel cleanly rather than up.
+#
+# It stops at generating the file. Publishing it somewhere the greeter can read
+# it needs root, and the greeter runs as the lightdm user which cannot see into
+# this home at all -- that copy is kali-deploy-physical's job, in the same
+# division of labour as everything else here.
+hook_lockimage() {
+    local share="${XDG_DATA_HOME:-$HOME/.local/share}/dots"
+    local tint="${DOTS_OWL_TINT:-slate}"
+    local png="$share/owl-lock.png"
+
+    python3 -c 'import PIL' 2>/dev/null || {
+        echo "skip  lock image (needs Pillow: apt install python3-pil)"
+        return
+    }
+
+    # --fit 0.7 --y 0.34. The greeter's login box sits dead centre and cannot be
+    # moved without an anchor argument that is easy to get wrong, so the bird
+    # moves instead: lifted to 34% of the height, the box lands on the branch
+    # below it and the face stays clear. Shrinking alone does not do it --
+    # --fit scales around the same centre, so the box still covers the face.
+    mkdir -p "$share"
+    if python3 "$DOTFILES/terminal/mkowl.py" --tint "$tint" --canvas 2560x1440 \
+            --fit 0.7 --y 0.34 -o "$png" >/dev/null; then
+        echo "hook  lock image ($tint) -> $png"
+    else
+        echo "warn  lock image could not be generated" >&2
+    fi
+}
+[ "$NO_TERMINAL" -eq 1 ] && echo "skip  lock image (--no-terminal)" || hook_lockimage
+
 # The desktop wallpaper. Lives here rather than in the deploy script for the same
 # reason the owl does: this repo owns what the box looks like, and the deploy
 # scripts own what is installed on it. They already split that way -- the deploy
