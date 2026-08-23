@@ -1,0 +1,85 @@
+# betterlockscreen — owlshells. Symlinked to ~/.config/betterlockscreen/ by
+# install.sh.
+#
+# This path, not ~/.config/betterlockscreenrc: 4.4.0 sources the old location but
+# prints a migration error to stderr every single time it runs.
+display_on=0
+span_image=false
+lock_timeout=300
+fx_list=(dim blur dimblur pixel dimpixel color)
+dim_level=40
+blur_level=1
+pixel_scale=10,1000
+solid_color=282828
+wallpaper_cmd="feh --bg-fill"
+quiet=false
+
+# The prompt palette -- dots/shell/zsh/prompt.zsh
+loginbox=282828cc
+loginshadow=00000000
+locktext="locked"
+font="JetBrainsMono Nerd Font"
+ringcolor=83A0A4ff
+insidecolor=1F1F1F99
+separatorcolor=00000000
+ringvercolor=B2A1C0ff
+insidevercolor=28282800
+ringwrongcolor=FF2D2Dff
+insidewrongcolor=FF2D2D33
+timecolor=DADADAff
+time_format="%H:%M"
+greetercolor=8A8A8Aff
+layoutcolor=8A8A8Aff
+keyhlcolor=B2A1C0ff
+bshlcolor=FF2D2Dff
+veriftext="checking"
+verifcolor=B2A1C0ff
+wrongtext="no"
+wrongcolor=FF2D2Dff
+modifcolor=B2A1C0ff
+bgcolor=282828ff
+
+# --- The password box -------------------------------------------------------
+#
+# This replaces the ring, and it is the reason /usr/local/bin/i3lock exists:
+# --box-indicator is ours, from dots/lock/box-indicator.patch, and the stock
+# i3lock-color will refuse to start if it ever gets these flags. See
+# dots/lock/README.md.
+#
+# What was here before was --no-unlock-indicator, to be rid of the circle. That
+# works, but the flag does much more than remove the ring: per i3lock(1) it
+# "will give feedback for every keypress and it will show you the current PAM
+# state", so turning it off took the keypress feedback, the "checking" text and
+# the "no" text with it. The lock screen became a picture that either went away
+# or did not, with nothing in between. The box brings all of that back and
+# still has no circle in it.
+#
+# lockargs+= rather than =: betterlockscreen sets lockargs=(-n) before it
+# sources this file, and -n (nofork) is what keeps xss-lock working. It also
+# appends "${lockargs[@]}" last on the i3lock line, which is what lets the
+# --ind-pos below override the one betterlockscreen hardcodes -- last flag wins.
+#
+# Geometry. betterlockscreen composites a 340x100 panel into the cached image at
+# x+15,y+h-140, and puts the clock and "locked" at x+45. The ring used to sit at
+# x+310, near the panel's right edge. The box takes the span between the clock
+# text and that edge: 190 wide centred on x+250 runs x+155..x+345, which is
+# clear of the text and 10px inside the panel. Nudge --ind-pos if a different
+# font or DPI moves the clock.
+lockargs+=(
+    --box-indicator
+    --ind-pos="x+250:y+h-85"
+    --box-width=190
+    --box-height=44
+    --box-radius=8
+    --box-border-width=2
+    --box-dot-radius=4
+    --box-dot-gap=10
+    --box-dot-color=DADADAff
+    --shake-amplitude=14
+    --shake-frequency=13
+    --shake-duration=0.45
+)
+#
+# The dots stop at nine, which is what fits 190px. That is a cap on how much of
+# the password length is on show as much as it is a layout constraint -- past
+# nine characters the box stops telling anyone watching how long it is.

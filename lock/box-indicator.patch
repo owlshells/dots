@@ -1,0 +1,434 @@
+diff --git a/i3lock.1 b/i3lock.1
+index a04d597..1bff4c1 100644
+--- a/i3lock.1
++++ b/i3lock.1
+@@ -484,6 +484,59 @@ Sets the number of minibars to draw on each screen.
+ .B \-\-bar\-total\-width
+ The total width of the bar. Can be an expression.
+ 
++.TP
++.B \-\-box\-indicator
++Replaces the usual ring indicator with a password box: a rounded rectangle
++holding one dot per byte of input, which shakes when the password is wrong.
++Unlike the ring, the box is drawn whether or not anything has been typed yet.
++It is positioned with \-\-ind\-pos, and it takes its border from the
++\-\-ring\-color family and its fill from the \-\-inside\-color family, so an
++existing ring palette carries over unchanged.
++
++.TP
++.B \-\-box\-width=number
++The width of the box, in pixels. Defaults to 340.
++
++.TP
++.B \-\-box\-height=number
++The height of the box, in pixels. Defaults to 56.
++
++.TP
++.B \-\-box\-radius=number
++The corner radius of the box. Defaults to 10. Clamped to half the shorter side,
++so a large value gives a stadium rather than an error.
++
++.TP
++.B \-\-box\-border\-width=number
++The width of the box border. Defaults to 2. Note that this is separate from
++\-\-ring\-width, whose default of 7 is far too heavy for a rectangle.
++
++.TP
++.B \-\-box\-dot\-radius=number
++The radius of each input dot. Defaults to 4.
++
++.TP
++.B \-\-box\-dot\-gap=number
++The gap between input dots. Defaults to 10.
++
++.TP
++.B \-\-box\-dot\-color=rrggbbaa
++The color of the input dots. Defaults to dadadaff.
++
++.TP
++.B \-\-shake\-amplitude=number
++Peak horizontal travel of the shake, in pixels, before decay is applied.
++Defaults to 14.
++
++.TP
++.B \-\-shake\-frequency=number
++Frequency of the shake, in Hz. Defaults to 13.
++
++.TP
++.B \-\-shake\-duration=seconds\-as\-double
++How long the shake lasts. Defaults to 0.45. Set to 0 to keep the box but
++disable the movement.
++
+ .TP
+ .B \-\-redraw\-thread
+ Starts a separate thread for redrawing the screen. Potentially worse from a
+diff --git a/i3lock.c b/i3lock.c
+index 8406fa6..7d62acc 100644
+--- a/i3lock.c
++++ b/i3lock.c
+@@ -298,6 +298,25 @@ bool redraw_thread = false;
+ #define MIN_BAR_COUNT 1
+ 
+ bool bar_enabled = false;
++
++/* Box indicator. Sizes are in pixels at the indicator position (--ind-pos),
++ * which the box inherits from the ring it replaces. */
++bool box_enabled = false;
++double box_width = 340.0;
++double box_height = 56.0;
++double box_radius = 10.0;
++double box_border_width = 2.0;
++double box_dot_radius = 4.0;
++double box_dot_gap = 10.0;
++char box_dot_color[9] = "dadadaff";
++
++/* Shake. ~0.45s of a 13Hz sine is a firm "no" without being a toy; amplitude
++ * is peak pixels of travel before the decay is applied. */
++double shake_amplitude = 14.0;
++double shake_frequency = 13.0;
++double shake_duration = 0.45;
++double shake_start = 0.0;
++static struct ev_timer *shake_tick = NULL;
+ double *bar_heights = NULL;
+ double bar_step = 15;
+ double bar_base_height = 25;
+@@ -519,9 +538,56 @@ static void finish_input(void) {
+  * authentication event.
+  *
+  */
++/* Drives the shake. Every other redraw in i3lock is event driven -- a
++ * keystroke, a PAM result, the clock tick -- and none of those fire during the
++ * half second after a failed password, so an animation needs a tick of its
++ * own. It runs only while the box is actually moving and stops itself
++ * afterwards, so an idle lock screen still redraws no more than it did before.
++ */
++#define SHAKE_FPS 60.0
++
++static void shake_tick_cb(EV_P_ ev_timer *w, int revents) {
++    bool done = (shake_start <= 0.0) ||
++                (monotonic_now() - shake_start >= shake_duration);
++    if (done) {
++        /* Clear first, then redraw, so the last frame drawn is the box at
++         * rest. Leaving it stopped mid-swing is the one visible way this can
++         * fail. */
++        shake_start = 0.0;
++        ev_timer_stop(main_loop, w);
++    }
++    redraw_screen();
++}
++
++static void start_shake(void) {
++    if (!box_enabled || shake_duration <= 0.0)
++        return;
++
++    shake_start = monotonic_now();
++
++    if (shake_tick == NULL) {
++        shake_tick = calloc(1, sizeof(struct ev_timer));
++        /* No memory means no animation, and that is the end of it. We cannot
++         * exit() here -- that would unlock the screen -- and a box that fails
++         * to shake is a cosmetic loss, not a security one. */
++        if (shake_tick == NULL)
++            return;
++        ev_timer_init(shake_tick, shake_tick_cb, 0., 1.0 / SHAKE_FPS);
++    }
++    ev_timer_again(main_loop, shake_tick);
++}
++
+ static void clear_auth_wrong(EV_P_ ev_timer *w, int revents) {
+     DEBUG("clearing auth wrong\n");
+     auth_state = STATE_AUTH_IDLE;
++
++    /* Belt and braces: the shake is far shorter than the two seconds before
++     * this runs, so it has stopped itself already in every ordinary case.
++     * Stopping an inactive watcher is a no-op. */
++    shake_start = 0.0;
++    if (shake_tick != NULL)
++        ev_timer_stop(main_loop, shake_tick);
++
+     redraw_screen();
+ 
+     /* Clear modifier string. */
+@@ -640,7 +706,8 @@ static void input_done(void) {
+     auth_state = STATE_AUTH_WRONG;
+     failed_attempts += 1;
+     clear_input();
+-    if (unlock_indicator)
++    start_shake();
++    if (unlock_indicator || box_enabled)
+         redraw_screen();
+ 
+     /* Clear this state after 2 seconds (unless the user enters another
+@@ -1701,6 +1768,19 @@ int main(int argc, char *argv[]) {
+         {"bar-count", required_argument, NULL, 710},
+         {"bar-total-width", required_argument, NULL, 711},
+ 
++        // box indicator
++        {"box-indicator", no_argument, NULL, 800},
++        {"box-width", required_argument, NULL, 801},
++        {"box-height", required_argument, NULL, 802},
++        {"box-radius", required_argument, NULL, 803},
++        {"box-border-width", required_argument, NULL, 804},
++        {"box-dot-radius", required_argument, NULL, 805},
++        {"box-dot-gap", required_argument, NULL, 806},
++        {"box-dot-color", required_argument, NULL, 807},
++        {"shake-amplitude", required_argument, NULL, 808},
++        {"shake-frequency", required_argument, NULL, 809},
++        {"shake-duration", required_argument, NULL, 810},
++
+         // misc.
+         {"redraw-thread", no_argument, NULL, 900},
+         {"refresh-rate", required_argument, NULL, 901},
+@@ -2363,6 +2443,56 @@ int main(int argc, char *argv[]) {
+                 if (sscanf(arg, "%31s", bar_width_expr) != 1) {
+                     errx(1, "missing argument for bar-total-width\n");
+                 }
++                break;
++
++            // Box indicator. Every dimension is rejected rather than clamped
++            // when it makes no sense, because these are read from a config
++            // file the user does not see the effect of until the screen is
++            // already locked.
++            case 800:
++                box_enabled = true;
++                break;
++            case 801:
++                if (sscanf(optarg, "%lf", &box_width) != 1 || box_width <= 0.0)
++                    errx(1, "box-width must be a positive number\n");
++                break;
++            case 802:
++                if (sscanf(optarg, "%lf", &box_height) != 1 || box_height <= 0.0)
++                    errx(1, "box-height must be a positive number\n");
++                break;
++            case 803:
++                if (sscanf(optarg, "%lf", &box_radius) != 1 || box_radius < 0.0)
++                    errx(1, "box-radius must be a non-negative number\n");
++                break;
++            case 804:
++                if (sscanf(optarg, "%lf", &box_border_width) != 1 || box_border_width < 0.0)
++                    errx(1, "box-border-width must be a non-negative number\n");
++                break;
++            case 805:
++                if (sscanf(optarg, "%lf", &box_dot_radius) != 1 || box_dot_radius <= 0.0)
++                    errx(1, "box-dot-radius must be a positive number\n");
++                break;
++            case 806:
++                if (sscanf(optarg, "%lf", &box_dot_gap) != 1 || box_dot_gap < 0.0)
++                    errx(1, "box-dot-gap must be a non-negative number\n");
++                break;
++            case 807:
++                parse_color(box_dot_color);
++                break;
++            case 808:
++                if (sscanf(optarg, "%lf", &shake_amplitude) != 1 || shake_amplitude < 0.0)
++                    errx(1, "shake-amplitude must be a non-negative number\n");
++                break;
++            case 809:
++                if (sscanf(optarg, "%lf", &shake_frequency) != 1 || shake_frequency < 0.0)
++                    errx(1, "shake-frequency must be a non-negative number\n");
++                break;
++            case 810:
++                // Zero is meaningful: it turns the shake off and leaves the
++                // rest of the box, for anyone who wants the field without the
++                // movement.
++                if (sscanf(optarg, "%lf", &shake_duration) != 1 || shake_duration < 0.0)
++                    errx(1, "shake-duration must be a non-negative number\n");
+                 break;
+ 
+ 			// Misc
+diff --git a/unlock_indicator.c b/unlock_indicator.c
+index e10984a..cb0d5d9 100644
+--- a/unlock_indicator.c
++++ b/unlock_indicator.c
+@@ -247,6 +247,30 @@ extern char bar_width_expr[32];
+ extern bool bar_bidirectional;
+ extern bool bar_reversed;
+ 
++/* Box indicator: a password field that shakes when the password is wrong.
++ * Drawn instead of the ring, the way the bar is. It borrows the ring and
++ * inside colors for its border and fill so an existing palette carries over
++ * unchanged; only the dot color is its own. */
++extern bool box_enabled;
++extern double box_width;
++extern double box_height;
++extern double box_radius;
++extern double box_border_width;
++extern double box_dot_radius;
++extern double box_dot_gap;
++extern char box_dot_color[9];
++
++/* Shake: a sine damped by a decaying exponential, offsetting the box on the x
++ * axis only. shake_start is the CLOCK_MONOTONIC second at which the current
++ * shake began, or 0 when the box is at rest. i3lock.c owns it, because that is
++ * where the authentication result arrives and where the ev loop lives. */
++extern double shake_amplitude;
++extern double shake_frequency;
++extern double shake_duration;
++extern double shake_start;
++
++rgba_t boxdot16;
++
+ static cairo_font_face_t *font_faces[6] = {
+     NULL,
+     NULL,
+@@ -518,6 +542,115 @@ static void draw_bar(cairo_t *ctx, double bar_x, double bar_y, double bar_width,
+     cairo_restore(ctx);
+ }
+ 
++/* Monotonic seconds. Deliberately not the wall clock: the shake is a duration,
++ * and a clock step from NTP or a suspend/resume mid-shake would otherwise make
++ * the box either freeze mid-swing or jump. */
++double monotonic_now(void) {
++    struct timespec ts;
++    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
++        return 0.0;
++    return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
++}
++
++/* Horizontal offset of the box for the current frame. Zero at rest, and zero
++ * again once the shake has run its course, so a missed final redraw can never
++ * strand the box off-center. */
++static double shake_offset(void) {
++    if (shake_start <= 0.0 || shake_duration <= 0.0)
++        return 0.0;
++
++    double t = monotonic_now() - shake_start;
++    if (t < 0.0 || t >= shake_duration)
++        return 0.0;
++
++    /* Decay to ~e^-5 (under 1% of amplitude) by the end of the duration, so the
++     * box arrives at rest rather than being cut off mid-swing. */
++    double decay = exp(-5.0 * t / shake_duration);
++    return shake_amplitude * decay * sin(2 * M_PI * shake_frequency * t);
++}
++
++static void rounded_rect(cairo_t *ctx, double x, double y, double w, double h, double r) {
++    if (r < 0.0)
++        r = 0.0;
++    if (r > w / 2)
++        r = w / 2;
++    if (r > h / 2)
++        r = h / 2;
++
++    cairo_new_sub_path(ctx);
++    cairo_arc(ctx, x + w - r, y + r,     r, -M_PI / 2, 0);
++    cairo_arc(ctx, x + w - r, y + h - r, r, 0, M_PI / 2);
++    cairo_arc(ctx, x + r,     y + h - r, r, M_PI / 2, M_PI);
++    cairo_arc(ctx, x + r,     y + r,     r, M_PI, 3 * M_PI / 2);
++    cairo_close_path(ctx);
++}
++
++/* The password field. Unlike the ring this is drawn unconditionally: a login
++ * box that only appears once you have already started typing is not the
++ * affordance we are after -- the point is to show where the password goes
++ * before the first keystroke. */
++static void draw_box(cairo_t *ctx, double ind_x, double ind_y) {
++    cairo_save(ctx);
++
++    double x = ind_x - box_width / 2 + shake_offset();
++    double y = ind_y - box_height / 2;
++
++    /* Fill and border both track the PAM state, matching what the ring does. */
++    rgba_t fill, border;
++    switch (auth_state) {
++        case STATE_AUTH_VERIFY:
++        case STATE_AUTH_LOCK:
++            fill = insidever16;
++            border = ringver16;
++            break;
++        case STATE_AUTH_WRONG:
++        case STATE_I3LOCK_LOCK_FAILED:
++            fill = insidewrong16;
++            border = ringwrong16;
++            break;
++        default:
++            fill = inside16;
++            border = ring16;
++            break;
++    }
++
++    rounded_rect(ctx, x, y, box_width, box_height, box_radius);
++    cairo_set_source_rgba(ctx, fill.red, fill.green, fill.blue, fill.alpha);
++    cairo_fill_preserve(ctx);
++    cairo_set_line_width(ctx, box_border_width);
++    cairo_set_source_rgba(ctx, border.red, border.green, border.blue, border.alpha);
++    cairo_stroke(ctx);
++
++    /* One dot per byte of input. input_position is a byte count, so a
++     * multibyte character draws more than one dot -- accepted deliberately:
++     * the alternative is reaching into the password buffer from the drawing
++     * code, and the buffer is better left where it is. The count is clamped to
++     * what fits, which doubles as a cap on how much of the length is on show.*/
++    int dots = input_position;
++    if (dots > 0) {
++        double step = box_dot_radius * 2 + box_dot_gap;
++        double usable = box_width - 2 * (box_border_width + box_dot_gap);
++        int max_dots = (step > 0.0) ? (int)((usable + box_dot_gap) / step) : 0;
++
++        if (max_dots < 1)
++            max_dots = 1;
++        if (dots > max_dots)
++            dots = max_dots;
++
++        double row = (dots - 1) * step + box_dot_radius * 2;
++        double dot_x = x + (box_width - row) / 2 + box_dot_radius;
++        double dot_y = y + box_height / 2;
++
++        cairo_set_source_rgba(ctx, boxdot16.red, boxdot16.green, boxdot16.blue, boxdot16.alpha);
++        for (int i = 0; i < dots; ++i) {
++            cairo_arc(ctx, dot_x + i * step, dot_y, box_dot_radius, 0, 2 * M_PI);
++            cairo_fill(ctx);
++        }
++    }
++
++    cairo_restore(ctx);
++}
++
+ static void draw_indic(cairo_t *ctx, double ind_x, double ind_y) {
+     if (unlock_indicator &&
+         (unlock_state >= STATE_KEY_PRESSED || auth_state > STATE_AUTH_IDLE || show_indicator)) {
+@@ -686,6 +819,7 @@ void init_colors_once(void) {
+     colorgen(&tmp, datecolor, &date16);
+     colorgen(&tmp, modifcolor, &modif16);
+     colorgen(&tmp, keyhlcolor, &keyhl16);
++    colorgen(&tmp, box_dot_color, &boxdot16);
+     colorgen(&tmp, bshlcolor, &bshl16);
+     colorgen(&tmp, separatorcolor, &sep16);
+     colorgen(&tmp, bar_base_color, &bar16);
+@@ -720,7 +854,9 @@ static DrawData create_draw_data() {
+ 
+ static void draw_elements(cairo_t *const ctx, DrawData const *const draw_data) {
+     // indicator stuff
+-    if (!bar_enabled) {
++    if (box_enabled) {
++        draw_box(ctx, draw_data->indicator_x, draw_data->indicator_y);
++    } else if (!bar_enabled) {
+         draw_indic(ctx, draw_data->indicator_x, draw_data->indicator_y);
+     } else {
+         if (unlock_state == STATE_KEY_ACTIVE ||
+@@ -822,7 +958,12 @@ void render_lock(uint32_t *resolution, xcb_drawable_t drawable) {
+      */
+     DrawData draw_data = create_draw_data();
+ 
+-    if (unlock_indicator &&
++    /* box_enabled satisfies this gate on its own. The status text -- verifying,
++     * wrong, no input -- is populated here rather than in the indicator
++     * drawing, so gating it on unlock_indicator alone is what makes
++     * --no-unlock-indicator suppress the words as well as the ring. The box is
++     * supposed to say what happened, so it opts in regardless. */
++    if ((unlock_indicator || box_enabled) &&
+         (unlock_state >= STATE_KEY_PRESSED || auth_state > STATE_AUTH_IDLE || show_indicator)) {
+         switch (auth_state) {
+             case STATE_AUTH_VERIFY:
+diff --git a/unlock_indicator.h b/unlock_indicator.h
+index 8a16ec1..309e2cc 100644
+--- a/unlock_indicator.h
++++ b/unlock_indicator.h
+@@ -63,6 +63,7 @@ typedef struct {
+     int y_behavior_arg;
+ } control_char_config_t;
+ 
++double monotonic_now(void);
+ void render_lock(uint32_t* resolution, xcb_drawable_t drawable);
+ void draw_image(uint32_t* resolution, cairo_surface_t* img, cairo_t* xcb_ctx);
+ void init_colors_once(void);

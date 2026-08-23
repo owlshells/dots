@@ -180,6 +180,46 @@ hook_lockimage() {
 }
 [ "$NO_TERMINAL" -eq 1 ] && echo "skip  lock image (--no-terminal)" || hook_lockimage
 
+# The lock screen's styling, which is the password box and nothing else about
+# it. Same division as everywhere else here: the deploy script installs
+# betterlockscreen and wires xss-lock to it, this repo decides what it looks
+# like when it comes up.
+#
+# The rc names --box-indicator, which is not a flag stock i3lock-color has -- it
+# comes from lock/box-indicator.patch, built and installed by lock/build.sh. The
+# ordering is deliberately forgiving: if the rc is in place and the patched
+# binary is not, i3lock exits non-zero on the unknown flag, betterlockscreen
+# fails with it, and owl-lock's `|| exec i3lock` fallback still locks the
+# screen. You get the stock grey lock instead of the owl, which is ugly and
+# safe. The one outcome that cannot happen is an unlocked screen, which is the
+# only property that actually matters here.
+#
+# Hence a warning rather than a refusal to link: the box is worth having on the
+# next run of build.sh, and nothing is broken in the meantime.
+hook_lockscreen() {
+    local rc="${XDG_CONFIG_HOME:-$HOME/.config}/betterlockscreen/betterlockscreenrc"
+
+    command -v betterlockscreen >/dev/null 2>&1 || {
+        echo "skip  lock screen (no betterlockscreen on this box)"
+        return
+    }
+
+    link "$DOTFILES/lock/betterlockscreenrc" "$rc"
+
+    # Not `command -v i3lock`: the stock binary is always there, and finding it
+    # tells us nothing. The question is whether the one first on PATH
+    # understands the flag. --version is what makes this safe to run from an
+    # install script -- i3lock parses options left to right, so the patched
+    # binary accepts --box-indicator and then exits 0 on --version without ever
+    # grabbing the screen, while the stock one bails on the unknown option
+    # first. Grepping --help would not do: it prints a one-line synopsis that
+    # lists none of the long options, patched or not.
+    if ! i3lock --box-indicator --version >/dev/null 2>&1; then
+        echo "warn  the box needs the patched i3lock: run $DOTFILES/lock/build.sh" >&2
+    fi
+}
+[ "$NO_TERMINAL" -eq 1 ] && echo "skip  lock screen (--no-terminal)" || hook_lockscreen
+
 # The desktop wallpaper. Lives here rather than in the deploy script for the same
 # reason the owl does: this repo owns what the box looks like, and the deploy
 # scripts own what is installed on it. They already split that way -- the deploy
