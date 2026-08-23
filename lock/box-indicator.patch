@@ -1,8 +1,8 @@
 diff --git a/i3lock.1 b/i3lock.1
-index a04d597..1bff4c1 100644
+index a04d597..573ae35 100644
 --- a/i3lock.1
 +++ b/i3lock.1
-@@ -484,6 +484,59 @@ Sets the number of minibars to draw on each screen.
+@@ -484,6 +484,82 @@ Sets the number of minibars to draw on each screen.
  .B \-\-bar\-total\-width
  The total width of the bar. Can be an expression.
  
@@ -59,14 +59,37 @@ index a04d597..1bff4c1 100644
 +How long the shake lasts. Defaults to 0.45. Set to 0 to keep the box but
 +disable the movement.
 +
++.TP
++.B \-\-lockout\-after=number
++Rate limit after this many consecutive failed attempts. Every further attempt
++then costs \-\-lockout\-delay seconds before it will be looked at, and the
++indicator shows a countdown. Defaults to 0, which disables it.
++.IP
++This is friction, not an access control. It slows someone sitting at the
++keyboard guessing; it does nothing about an attacker who can power-cycle the
++machine, because the counter lives in the running locker and a fresh one starts
++at zero. Note also that it is not
++.BR pam_faillock (8):
++no PAM state is touched, so this can never lock you out of sudo or a TTY. The
++worst it can do is make you wait.
++
++.TP
++.B \-\-lockout\-delay=seconds\-as\-double
++How long each attempt costs once the limit is in force. Defaults to 30.
++
++.TP
++.B \-\-lockout\-text=string
++Prefix shown with the countdown, rendered as "<text> <n>s". Defaults to "wait".
++Taken literally: a percent sign in here is printed, not interpreted as a format.
++
  .TP
  .B \-\-redraw\-thread
  Starts a separate thread for redrawing the screen. Potentially worse from a
 diff --git a/i3lock.c b/i3lock.c
-index 8406fa6..7d62acc 100644
+index 8406fa6..7c9ba29 100644
 --- a/i3lock.c
 +++ b/i3lock.c
-@@ -298,6 +298,25 @@ bool redraw_thread = false;
+@@ -298,6 +298,44 @@ bool redraw_thread = false;
  #define MIN_BAR_COUNT 1
  
  bool bar_enabled = false;
@@ -89,10 +112,58 @@ index 8406fa6..7d62acc 100644
 +double shake_duration = 0.45;
 +double shake_start = 0.0;
 +static struct ev_timer *shake_tick = NULL;
++
++/* Rate limit. After lockout_after consecutive failures, every further attempt
++ * costs lockout_delay seconds before it will be looked at.
++ *
++ * This is friction, not an access control, and it is worth being clear about
++ * which. It slows someone sitting at the keyboard guessing; it does nothing
++ * about an attacker who can power-cycle the machine or read the disk, because
++ * the counter lives in this process and a fresh locker starts at zero. A new
++ * locker only appears after an unlock or a reboot, so that is the honest limit
++ * of what it buys.
++ *
++ * Deliberately NOT pam_faillock: that locks the account, which on a laptop
++ * means locking yourself out of sudo and the TTYs as well as the screen. This
++ * touches no PAM state at all -- the worst it can do is make you wait. */
++int lockout_after = 0; /* 0 disables */
++double lockout_delay = 30.0;
++char *lockout_text = "wait";
++double throttle_until = 0.0;
++static struct ev_timer *throttle_tick = NULL;
  double *bar_heights = NULL;
  double bar_step = 15;
  double bar_base_height = 25;
-@@ -519,9 +538,56 @@ static void finish_input(void) {
+@@ -507,7 +545,28 @@ ev_timer *stop_timer(ev_timer *timer_obj) {
+  * Neccessary calls after ending input via enter or others
+  *
+  */
++/* Seconds left on the rate limit, rounded up; 0 when it is not in force. */
++int throttle_remaining(void) {
++    if (throttle_until <= 0.0)
++        return 0;
++    double left = throttle_until - monotonic_now();
++    if (left <= 0.0)
++        return 0;
++    return (int)(left + 0.999);
++}
++
+ static void finish_input(void) {
++    /* The one choke point for submitting a password, which is why the rate
++     * limit is enforced here rather than in the Return handler. Pressing Return
++     * during the wrong-password window does not call that handler's submit
++     * path at all -- it sets retry_verification, and clear_auth_wrong calls
++     * finish_input() itself two seconds later. Gating the key handler would
++     * have left that queued retry as a way straight past the limit. */
++    if (throttle_remaining() > 0) {
++        redraw_screen(); /* keep the countdown honest if a key woke us */
++        return;
++    }
++
+     password[input_position] = '\0';
+     unlock_state = STATE_KEY_PRESSED;
+     redraw_screen();
+@@ -519,9 +578,86 @@ static void finish_input(void) {
   * authentication event.
   *
   */
@@ -115,6 +186,36 @@ index 8406fa6..7d62acc 100644
 +        ev_timer_stop(main_loop, w);
 +    }
 +    redraw_screen();
++}
++
++/* Ticks once a second while the rate limit is in force, purely so the countdown
++ * on screen decrements. Stops itself the moment it expires, so it costs nothing
++ * on a lock screen nobody is failing to log into. */
++static void throttle_tick_cb(EV_P_ ev_timer *w, int revents) {
++    if (throttle_remaining() <= 0) {
++        throttle_until = 0.0;
++        ev_timer_stop(main_loop, w);
++    }
++    redraw_screen();
++}
++
++static void start_throttle(void) {
++    if (lockout_after <= 0 || failed_attempts < lockout_after)
++        return;
++
++    throttle_until = monotonic_now() + lockout_delay;
++
++    if (throttle_tick == NULL) {
++        throttle_tick = calloc(1, sizeof(struct ev_timer));
++        /* No memory means no countdown on screen. The limit itself still
++         * holds -- finish_input() reads the clock, not this timer -- so the
++         * failure mode is a stale number, not a way past the wait. And a
++         * locker must never exit() of its own accord. */
++        if (throttle_tick == NULL)
++            return;
++        ev_timer_init(throttle_tick, throttle_tick_cb, 0., 1.0);
++    }
++    ev_timer_again(main_loop, throttle_tick);
 +}
 +
 +static void start_shake(void) {
@@ -149,17 +250,18 @@ index 8406fa6..7d62acc 100644
      redraw_screen();
  
      /* Clear modifier string. */
-@@ -640,7 +706,8 @@ static void input_done(void) {
+@@ -640,7 +776,9 @@ static void input_done(void) {
      auth_state = STATE_AUTH_WRONG;
      failed_attempts += 1;
      clear_input();
 -    if (unlock_indicator)
++    start_throttle();
 +    start_shake();
 +    if (unlock_indicator || box_enabled)
          redraw_screen();
  
      /* Clear this state after 2 seconds (unless the user enters another
-@@ -1701,6 +1768,19 @@ int main(int argc, char *argv[]) {
+@@ -1701,6 +1839,22 @@ int main(int argc, char *argv[]) {
          {"bar-count", required_argument, NULL, 710},
          {"bar-total-width", required_argument, NULL, 711},
  
@@ -175,11 +277,14 @@ index 8406fa6..7d62acc 100644
 +        {"shake-amplitude", required_argument, NULL, 808},
 +        {"shake-frequency", required_argument, NULL, 809},
 +        {"shake-duration", required_argument, NULL, 810},
++        {"lockout-after", required_argument, NULL, 811},
++        {"lockout-delay", required_argument, NULL, 812},
++        {"lockout-text", required_argument, NULL, 813},
 +
          // misc.
          {"redraw-thread", no_argument, NULL, 900},
          {"refresh-rate", required_argument, NULL, 901},
-@@ -2363,6 +2443,56 @@ int main(int argc, char *argv[]) {
+@@ -2363,6 +2517,71 @@ int main(int argc, char *argv[]) {
                  if (sscanf(arg, "%31s", bar_width_expr) != 1) {
                      errx(1, "missing argument for bar-total-width\n");
                  }
@@ -233,14 +338,29 @@ index 8406fa6..7d62acc 100644
 +                // movement.
 +                if (sscanf(optarg, "%lf", &shake_duration) != 1 || shake_duration < 0.0)
 +                    errx(1, "shake-duration must be a non-negative number\n");
++                break;
++            case 811:
++                // 0 disables the rate limit entirely, which is the default.
++                if (sscanf(optarg, "%d", &lockout_after) != 1 || lockout_after < 0)
++                    errx(1, "lockout-after must be a non-negative whole number\n");
++                break;
++            case 812:
++                if (sscanf(optarg, "%lf", &lockout_delay) != 1 || lockout_delay <= 0.0)
++                    errx(1, "lockout-delay must be a positive number of seconds\n");
++                break;
++            case 813:
++                // Taken as a literal prefix and never as a format string: the
++                // countdown is appended with snprintf by the drawing code, so
++                // a '%s' in here is printed, not interpreted.
++                lockout_text = optarg;
                  break;
  
  			// Misc
 diff --git a/unlock_indicator.c b/unlock_indicator.c
-index e10984a..cb0d5d9 100644
+index e10984a..3788029 100644
 --- a/unlock_indicator.c
 +++ b/unlock_indicator.c
-@@ -247,6 +247,30 @@ extern char bar_width_expr[32];
+@@ -247,6 +247,35 @@ extern char bar_width_expr[32];
  extern bool bar_bidirectional;
  extern bool bar_reversed;
  
@@ -266,12 +386,17 @@ index e10984a..cb0d5d9 100644
 +extern double shake_duration;
 +extern double shake_start;
 +
++/* Rate limit, owned by i3lock.c along with the rest of the auth state. */
++extern int lockout_after;
++extern char *lockout_text;
++int throttle_remaining(void);
++
 +rgba_t boxdot16;
 +
  static cairo_font_face_t *font_faces[6] = {
      NULL,
      NULL,
-@@ -518,6 +542,115 @@ static void draw_bar(cairo_t *ctx, double bar_x, double bar_y, double bar_width,
+@@ -518,6 +547,122 @@ static void draw_bar(cairo_t *ctx, double bar_x, double bar_y, double bar_width,
      cairo_restore(ctx);
  }
  
@@ -328,23 +453,30 @@ index e10984a..cb0d5d9 100644
 +    double x = ind_x - box_width / 2 + shake_offset();
 +    double y = ind_y - box_height / 2;
 +
-+    /* Fill and border both track the PAM state, matching what the ring does. */
-+    rgba_t fill, border;
-+    switch (auth_state) {
-+        case STATE_AUTH_VERIFY:
-+        case STATE_AUTH_LOCK:
-+            fill = insidever16;
-+            border = ringver16;
-+            break;
-+        case STATE_AUTH_WRONG:
-+        case STATE_I3LOCK_LOCK_FAILED:
-+            fill = insidewrong16;
-+            border = ringwrong16;
-+            break;
-+        default:
-+            fill = inside16;
-+            border = ring16;
-+            break;
++    /* Fill and border both track the PAM state, matching what the ring does.
++     * A rate limit in force reads as wrong for as long as it lasts: the wrong
++     * state itself clears after two seconds, and a box that went back to its
++     * resting colour while still refusing to accept a password would be
++     * lying about whether you can try again. */
++    rgba_t fill = inside16, border = ring16;
++    if (throttle_remaining() > 0) {
++        fill = insidewrong16;
++        border = ringwrong16;
++    } else {
++        switch (auth_state) {
++            case STATE_AUTH_VERIFY:
++            case STATE_AUTH_LOCK:
++                fill = insidever16;
++                border = ringver16;
++                break;
++            case STATE_AUTH_WRONG:
++            case STATE_I3LOCK_LOCK_FAILED:
++                fill = insidewrong16;
++                border = ringwrong16;
++                break;
++            default:
++                break;
++        }
 +    }
 +
 +    rounded_rect(ctx, x, y, box_width, box_height, box_radius);
@@ -387,7 +519,7 @@ index e10984a..cb0d5d9 100644
  static void draw_indic(cairo_t *ctx, double ind_x, double ind_y) {
      if (unlock_indicator &&
          (unlock_state >= STATE_KEY_PRESSED || auth_state > STATE_AUTH_IDLE || show_indicator)) {
-@@ -686,6 +819,7 @@ void init_colors_once(void) {
+@@ -686,6 +831,7 @@ void init_colors_once(void) {
      colorgen(&tmp, datecolor, &date16);
      colorgen(&tmp, modifcolor, &modif16);
      colorgen(&tmp, keyhlcolor, &keyhl16);
@@ -395,7 +527,7 @@ index e10984a..cb0d5d9 100644
      colorgen(&tmp, bshlcolor, &bshl16);
      colorgen(&tmp, separatorcolor, &sep16);
      colorgen(&tmp, bar_base_color, &bar16);
-@@ -720,7 +854,9 @@ static DrawData create_draw_data() {
+@@ -720,7 +866,9 @@ static DrawData create_draw_data() {
  
  static void draw_elements(cairo_t *const ctx, DrawData const *const draw_data) {
      // indicator stuff
@@ -406,7 +538,7 @@ index e10984a..cb0d5d9 100644
          draw_indic(ctx, draw_data->indicator_x, draw_data->indicator_y);
      } else {
          if (unlock_state == STATE_KEY_ACTIVE ||
-@@ -822,7 +958,12 @@ void render_lock(uint32_t *resolution, xcb_drawable_t drawable) {
+@@ -822,7 +970,28 @@ void render_lock(uint32_t *resolution, xcb_drawable_t drawable) {
       */
      DrawData draw_data = create_draw_data();
  
@@ -416,10 +548,54 @@ index e10984a..cb0d5d9 100644
 +     * drawing, so gating it on unlock_indicator alone is what makes
 +     * --no-unlock-indicator suppress the words as well as the ring. The box is
 +     * supposed to say what happened, so it opts in regardless. */
-+    if ((unlock_indicator || box_enabled) &&
++    /* The rate limit outranks every other status message, and is checked before
++     * the gate below rather than inside it: while it is in force there is
++     * nothing else worth saying, and the countdown has to keep being drawn even
++     * once the wrong state has cleared and unlock_state has gone back to
++     * STATE_STARTED -- which is exactly when that gate stops being true. */
++    int wait_left = throttle_remaining();
++    if (wait_left > 0 && (unlock_indicator || box_enabled)) {
++        draw_data.status_text.show = true;
++        snprintf(draw_data.status_text.str, sizeof(draw_data.status_text.str),
++                 "%s %ds", lockout_text, wait_left);
++        draw_data.status_text.font = get_font_face(WRONG_FONT);
++        draw_data.status_text.color = wrong16;
++        draw_data.status_text.outline_color = wrongoutline16;
++        draw_data.status_text.size = wrong_size;
++        draw_data.status_text.outline_width = wrongoutlinewidth;
++        draw_data.status_text.align = wrong_align;
++    } else if ((unlock_indicator || box_enabled) &&
          (unlock_state >= STATE_KEY_PRESSED || auth_state > STATE_AUTH_IDLE || show_indicator)) {
          switch (auth_state) {
              case STATE_AUTH_VERIFY:
+@@ -1053,7 +1222,13 @@ void render_lock(uint32_t *resolution, xcb_drawable_t drawable) {
+             draw_data.greeter_text.x = te_eval(te_greeter_x_expr);
+             draw_data.greeter_text.y = te_eval(te_greeter_y_expr);
+ 
+-            switch (auth_state) {
++            /* Throttled text sits where the wrong text sits. auth_state goes
++             * back to idle two seconds in, so keying the position off it alone
++             * would move the countdown mid-count. */
++            if (throttle_remaining() > 0) {
++                draw_data.status_text.x = te_eval(te_wrong_x_expr);
++                draw_data.status_text.y = te_eval(te_wrong_y_expr);
++            } else switch (auth_state) {
+                 case STATE_AUTH_VERIFY:
+                 case STATE_AUTH_LOCK:
+                     draw_data.status_text.x = te_eval(te_verif_x_expr);
+@@ -1123,7 +1298,11 @@ void render_lock(uint32_t *resolution, xcb_drawable_t drawable) {
+         draw_data.keylayout_text.y = te_eval(te_layout_y_expr);
+         draw_data.greeter_text.x = te_eval(te_greeter_x_expr);
+         draw_data.greeter_text.y = te_eval(te_greeter_y_expr);
+-        switch (auth_state) {
++        /* Same reasoning as the multi-screen branch above. */
++        if (throttle_remaining() > 0) {
++            draw_data.status_text.x = te_eval(te_wrong_x_expr);
++            draw_data.status_text.y = te_eval(te_wrong_y_expr);
++        } else switch (auth_state) {
+             case STATE_AUTH_VERIFY:
+             case STATE_AUTH_LOCK:
+                 draw_data.status_text.x = te_eval(te_verif_x_expr);
 diff --git a/unlock_indicator.h b/unlock_indicator.h
 index 8a16ec1..309e2cc 100644
 --- a/unlock_indicator.h

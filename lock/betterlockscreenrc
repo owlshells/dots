@@ -88,7 +88,27 @@ lockargs+=(
     --shake-amplitude=14
     --shake-frequency=13
     --shake-duration=0.45
+    --lockout-after=10
+    --lockout-delay=30
+    --lockout-text="wait"
 )
+#
+# The rate limit. Ten wrong passwords in a row and every further attempt costs
+# thirty seconds, counted down in place of the "no". Ten is high enough that
+# fat-fingering a passphrase in the dark never reaches it, and thirty seconds
+# is short enough that genuinely having forgotten it is an annoyance rather
+# than a reinstall.
+#
+# It is friction and not an access control, which is worth being honest about:
+# the counter lives in the running locker, so anyone who can power-cycle the
+# box gets a fresh one. What it stops is someone picking up an unattended
+# laptop and working through a shortlist of guesses.
+#
+# Deliberately not pam_faillock. That locks the *account*, which on a laptop
+# means locking yourself out of sudo and the TTYs at the same moment you are
+# already shut out of the session -- a self-inflicted denial of service with a
+# reboot and a recovery shell as the way back. This touches no PAM state at
+# all; the worst it can do is make you wait.
 #
 # The dots stop at nine, which is what fits 190px. That is a cap on how much of
 # the password length is on show as much as it is a layout constraint -- past

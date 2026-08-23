@@ -46,15 +46,41 @@ nothing fires during that window, so the shake runs its own 60fps `ev` timer
 that starts on the failure and stops itself when the animation ends. An idle
 lock screen redraws exactly as often as it did before.
 
+## The rate limit
+
+After `--lockout-after` consecutive failures, every further attempt costs
+`--lockout-delay` seconds before it is looked at, counted down on screen in
+place of the wrong text. The box holds its wrong colour for the whole window
+rather than resting after two seconds, because a box that looked ready while
+still refusing input would be lying.
+
+It is enforced in `finish_input()`, which is the single choke point for
+submitting a password. That matters: pressing Return during the wrong-password
+window does **not** go through the key handler's submit path — it sets
+`retry_verification`, and `clear_auth_wrong` calls `finish_input()` itself two
+seconds later. A gate in the key handler would have left that queued retry as a
+way straight past the limit.
+
+Two honest limits on what this buys:
+
+- **It is friction, not an access control.** The counter lives in the running
+  locker, so anyone who can power-cycle the machine gets a fresh one. What it
+  stops is someone picking up an unattended laptop and working through a
+  shortlist of guesses.
+- **It is not `pam_faillock`, deliberately.** That locks the *account*, which on
+  a laptop means locking yourself out of sudo and the TTYs at the same moment
+  you are already shut out of the session. This touches no PAM state; the worst
+  it can do is make you wait.
+
 New flags, all documented in the patched `i3lock(1)`:
 
     --box-indicator            --shake-amplitude=px
     --box-width=px             --shake-frequency=hz
     --box-height=px            --shake-duration=seconds   (0 disables the shake)
     --box-radius=px
-    --box-border-width=px
-    --box-dot-radius=px
-    --box-dot-gap=px
+    --box-border-width=px      --lockout-after=n          (0 disables the limit)
+    --box-dot-radius=px        --lockout-delay=seconds
+    --box-dot-gap=px           --lockout-text=string
     --box-dot-color=rrggbbaa
 
 ## Building
