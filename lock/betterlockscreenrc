@@ -63,11 +63,21 @@ bgcolor=282828ff
 # x+15,y+h-140, and puts the clock and "locked" at x+45. The ring used to sit at
 # x+310, near the panel's right edge. The box takes the span between the clock
 # text and that edge: 190 wide centred on x+250 runs x+155..x+345, which is
-# clear of the text and 10px inside the panel. Nudge --ind-pos if a different
-# font or DPI moves the clock.
+# clear of the text and 10px inside the panel.
+#
+# The three text positions are re-pinned to absolute coordinates below, and they
+# have to be. betterlockscreen writes them relative to the indicator --
+# --time-pos="ix-265:iy-10" and friends -- so moving --ind-pos from x+310 to
+# x+250 dragged the clock from x+45 to x-15 and clipped it off the left edge of
+# the screen. Pinning them to x+45 puts them back exactly where betterlockscreen
+# had them and decouples them from the box, so the box can be moved from here
+# without the clock following it off-screen.
 lockargs+=(
     --box-indicator
     --ind-pos="x+250:y+h-85"
+    --time-pos="x+45:y+h-90"
+    --greeter-pos="x+45:y+h-68"
+    --layout-pos="x+45:y+h-48"
     --box-width=190
     --box-height=44
     --box-radius=8
