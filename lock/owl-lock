@@ -1,0 +1,35 @@
+#!/bin/sh
+# owl-lock — lock the screen, and fail closed if the pretty path breaks.
+#
+# Both $mod+Escape and xss-lock go through this rather than calling
+# betterlockscreen directly, so that the idle timeout gets the same fallback the
+# keybinding does. xss-lock takes a command, not a shell expression, so `a || b`
+# written on the bindsym line would have protected only the binding.
+#
+# NOT `exec betterlockscreen -l || exec i3lock`, which is what this was:
+#
+#     exec betterlockscreen -l 2>/dev/null || exec i3lock -c 282828 -n
+#
+# exec replaces this process, so the moment betterlockscreen starts, its exit
+# status IS this script's exit status and the || branch is unreachable code. The
+# fallback fired only when exec itself failed -- i.e. betterlockscreen not
+# installed at all -- and never for the case it was written for, which is
+# betterlockscreen starting, failing, and leaving the screen unlocked.
+#
+#     $ sh -c 'exec false || echo fallback'   # prints nothing, exits 1
+#
+# The exec was there so xss-lock's signals would reach the locker instead of a
+# wrapper shell. That never worked either: betterlockscreen is itself a shell
+# script that runs i3lock as a child, so there has always been a shell in the
+# middle, and this adds no layer that was not there before.
+#
+# Ways betterlockscreen -l exits non-zero, all of which now actually fall back:
+#   - its per-resolution cache is missing (betterlockscreen -u never ran)
+#   - i3lock rejects a flag, e.g. lock/betterlockscreenrc asks for the box
+#     indicator on a box where lock/build.sh has not been run
+#   - a display/xrandr hiccup while it works out which cache to use
+betterlockscreen -l 2>/dev/null && exit 0
+
+# Plain i3lock: no image, no styling, and none of it matters. The only property
+# being defended here is that something has the screen.
+exec i3lock -c 282828 -n
