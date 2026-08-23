@@ -6,51 +6,57 @@
 # keybinding does. xss-lock takes a command, not a shell expression, so `a || b`
 # written on the bindsym line would have protected only the binding.
 #
-# NOT `exec betterlockscreen -l || exec i3lock`, which is what this was:
+# --- Why this does not trust betterlockscreen's exit status ---
 #
-#     exec betterlockscreen -l 2>/dev/null || exec i3lock -c 282828 -n
+# It is not usable. betterlockscreen's lock() runs i3lock as its last statement,
+# but the caller runs postlock() afterwards regardless, so what the script
+# finally reports is postlock's success and not the locker's. Measured on a box
+# whose i3lock rejected a flag in betterlockscreenrc:
 #
-# exec replaces this process, so the moment betterlockscreen starts, its exit
-# status IS this script's exit status and the || branch is unreachable code. The
-# fallback fired only when exec itself failed -- i.e. betterlockscreen not
-# installed at all -- and never for the case it was written for, which is
-# betterlockscreen starting, failing, and leaving the screen unlocked.
+#     exit=0  elapsed=0.04s     -- and the screen stayed wide open
 #
-#     $ sh -c 'exec false || echo fallback'   # prints nothing, exits 1
+# So `betterlockscreen -l && exit 0` is a trap, and so is the `exec
+# betterlockscreen -l || exec i3lock` this file used to contain: both believe a
+# zero that means nothing. The keybinding appears to do nothing at all, which is
+# the worst possible failure -- you press it, see no lock, assume the machine is
+# locked anyway, and walk off.
 #
-# The exec was there so xss-lock's signals would reach the locker instead of a
-# wrapper shell. That never worked either: betterlockscreen is itself a shell
-# script that runs i3lock as a child, so there has always been a shell in the
-# middle, and this adds no layer that was not there before.
+# Time it instead. A lock that genuinely took the screen cannot return in under
+# a second, because a human has to type a password to end it; every failure mode
+# returns essentially instantly. If it comes back too fast, it did not lock, and
+# we lock properly below.
 #
-# Ways betterlockscreen -l exits non-zero, all of which now actually fall back:
-#   - its per-resolution cache is missing (betterlockscreen -u never ran)
-#   - i3lock rejects a flag, e.g. lock/betterlockscreenrc asks for the box
-#     indicator on a box where lock/build.sh has not been run
-#   - a display/xrandr hiccup while it works out which cache to use
-betterlockscreen -l 2>/dev/null && exit 0
+# The threshold errs on purpose. A false positive re-locks a screen you just
+# unlocked, and you type your password again. A false negative leaves the
+# machine open while you believe it is locked. Those are not comparable, so the
+# cheap mistake is the one to make.
+start=$(date +%s)
+betterlockscreen -l 2>/dev/null
+if [ $(( $(date +%s) - start )) -ge 2 ]; then
+    exit 0
+fi
 
-# The fallback has to actually appear, which `i3lock -c` on its own does not
-# reliably do. i3lock only starts its periodic redraw when there is something
-# that needs one:
+# --- Fallback ---
+#
+# It has to actually appear, which `i3lock -c` on its own does not reliably do.
+# i3lock only starts its periodic redraw when something needs one:
 #
 #     if (show_clock || bar_enabled || slideshow_enabled) { ... }
 #
-# With none of those it paints once, at map time, and then nothing until an
-# input event forces a redraw. Under a compositor that first paint can be
-# missed, and the result is a locked machine still showing the desktop until a
-# key is pressed -- which looks exactly like a machine that did not lock, and
-# invites walking away from one that has not.
+# With a flat colour and no clock, none of those hold, so it paints once at map
+# time and then nothing until an input event forces a redraw. Under a compositor
+# that first paint can be missed outright, and the result is a locked machine
+# still showing the desktop until a key is pressed -- which again looks exactly
+# like a machine that did not lock.
 #
-# --clock is what starts the tick, so the screen repaints every second and
-# corrects itself within one. --indicator keeps the ring up as well: this is the
-# degraded path, and looking obviously different from the usual lock screen is a
-# feature here, not a regression.
+# --clock starts the tick, so the screen repaints every second and corrects
+# itself within one. --indicator keeps the ring up as well: this is the degraded
+# path, and looking obviously unlike the usual lock screen is worth having.
 #
 # Probed with --version rather than assumed, because plain i3lock has no --clock
-# and would exit on the unknown option -- turning a cosmetic problem into an
-# unlocked screen. --version parses options left to right and exits before
-# touching the display, so the probe costs nothing.
+# and would exit on the unknown option -- turning a cosmetic problem back into
+# an unlocked screen. --version parses options left to right and exits before
+# touching the display, so the probe costs nothing and cannot lock anything.
 if i3lock --clock --version >/dev/null 2>&1; then
     exec i3lock -c 282828 -n --clock --force-clock --indicator
 fi
