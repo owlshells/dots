@@ -30,6 +30,31 @@
 #   - a display/xrandr hiccup while it works out which cache to use
 betterlockscreen -l 2>/dev/null && exit 0
 
-# Plain i3lock: no image, no styling, and none of it matters. The only property
-# being defended here is that something has the screen.
+# The fallback has to actually appear, which `i3lock -c` on its own does not
+# reliably do. i3lock only starts its periodic redraw when there is something
+# that needs one:
+#
+#     if (show_clock || bar_enabled || slideshow_enabled) { ... }
+#
+# With none of those it paints once, at map time, and then nothing until an
+# input event forces a redraw. Under a compositor that first paint can be
+# missed, and the result is a locked machine still showing the desktop until a
+# key is pressed -- which looks exactly like a machine that did not lock, and
+# invites walking away from one that has not.
+#
+# --clock is what starts the tick, so the screen repaints every second and
+# corrects itself within one. --indicator keeps the ring up as well: this is the
+# degraded path, and looking obviously different from the usual lock screen is a
+# feature here, not a regression.
+#
+# Probed with --version rather than assumed, because plain i3lock has no --clock
+# and would exit on the unknown option -- turning a cosmetic problem into an
+# unlocked screen. --version parses options left to right and exits before
+# touching the display, so the probe costs nothing.
+if i3lock --clock --version >/dev/null 2>&1; then
+    exec i3lock -c 282828 -n --clock --force-clock --indicator
+fi
+
+# Vanilla i3lock. No image, no styling, and none of it matters. The only
+# property being defended here is that something has the screen.
 exec i3lock -c 282828 -n
