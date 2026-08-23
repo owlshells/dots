@@ -1,46 +1,72 @@
 #!/bin/sh
-# owl-maximize — $mod+f, doing the sensible thing for the window you are on.
+# owl-maximize — $mod+f. Fill the workspace without telling the window it is
+# fullscreen.
 #
-#   tiled window     -> i3's real fullscreen, which is what it should be
-#   floating window  -> fill the workspace, leaving polybar visible, and toggle
-#                       back to where it was on a second press
+# The distinction matters more than it sounds. i3's `fullscreen toggle` sets
+# _NET_WM_STATE_FULLSCREEN on the window:
 #
-# i3 cannot express the floating half on its own. `fullscreen` on a floating
-# window covers the whole output including the bar, and `resize set 100 ppt
-# 100 ppt` is no help because ppt resolves against the *output*, not the
-# workspace: on a 1920x1200 panel with a 32px bar that produces a 1200-tall
-# window sitting 16px above where it should be, straddling the bar. The
-# workspace rect is the number that matters and only i3 knows it, so ask.
+#   normal:           _NET_WM_STATE_MAXIMIZED_VERT, _NET_WM_STATE_FOCUSED
+#   after fullscreen: ..., _NET_WM_STATE_FULLSCREEN, _NET_WM_STATE_MAXIMIZED_HORZ
+#
+# Firefox watches that atom and treats it exactly as it treats F11 -- tabs,
+# toolbar and the bookmarks bar all disappear. That is not i3 misbehaving, it is
+# Firefox reacting correctly to a hint i3 is right to set. Any app with a
+# fullscreen mode does the same. So the only way to have a window fill the
+# screen while keeping its chrome is to resize it and never set the atom.
+#
+# Hence: float the window if it is not already, size it to the workspace, and
+# put it back on a second press. The workspace rect is what bounds it, so
+# polybar stays visible -- and `resize set 100 ppt 100 ppt` is no substitute for
+# asking, because ppt resolves against the *output*: on a 1920x1200 panel with a
+# 32px bar it yields a 1200-tall window sitting at y=16, straddling the bar.
 set -eu
 
 STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/owl-maximize"
 mkdir -p "$STATE_DIR"
 
-focused=$(i3-msg -t get_tree \
+tree=$(i3-msg -t get_tree)
+
+# Drop state for windows that have since closed, so a long session does not
+# accumulate files and a recycled container id cannot inherit stale geometry.
+live=$(printf '%s' "$tree" | jq -r '[recurse(.nodes[]?, .floating_nodes[]?) | .id] | join(" ")')
+for f in "$STATE_DIR"/*; do
+    [ -e "$f" ] || continue
+    case " $live " in *" $(basename "$f") "*) ;; *) rm -f "$f" ;; esac
+done
+
+focused=$(printf '%s' "$tree" \
     | jq -c 'first(recurse(.nodes[]?, .floating_nodes[]?) | select(.focused == true))')
 [ -n "$focused" ] && [ "$focused" != "null" ] || exit 0
-
-case $(printf '%s' "$focused" | jq -r '.floating // "auto_off"') in
-    user_on|auto_on) ;;
-    *) exec i3-msg -q 'fullscreen toggle' ;;
-esac
 
 id=$(printf '%s' "$focused" | jq -r '.id')
 state="$STATE_DIR/$id"
 
-# The state file is the toggle, rather than comparing the current geometry
-# against the workspace: a floating container carries its border, so a
-# maximised window's rect is a few pixels off the workspace rect and never
-# compares equal. Presence of the file is unambiguous.
+# The state file is the toggle rather than a geometry comparison: a floating
+# container carries its border, so a maximised window's rect is a few pixels off
+# the workspace rect and never compares equal.
 if [ -f "$state" ]; then
-    # shellcheck disable=SC2046 # deliberate: four fields into four arguments
+    # shellcheck disable=SC2046 # deliberate: five fields into five arguments
     set -- $(cat "$state")
     rm -f "$state"
-else
-    printf '%s' "$focused" | jq -r '"\(.rect.x) \(.rect.y) \(.rect.width) \(.rect.height)"' >"$state"
-    # shellcheck disable=SC2046
-    set -- $(i3-msg -t get_workspaces \
-        | jq -r '.[] | select(.focused) | "\(.rect.x) \(.rect.y) \(.rect.width) \(.rect.height)"')
+    if [ "$1" = tiled ]; then
+        # Back into the layout; i3 restores its size and position itself.
+        exec i3-msg -q 'floating disable'
+    fi
+    exec i3-msg -q "resize set $4 px $5 px, move position $2 px $3 px"
 fi
 
+case $(printf '%s' "$focused" | jq -r '.floating // "auto_off"') in
+    user_on|auto_on) mode=floating ;;
+    *)               mode=tiled ;;
+esac
+
+printf '%s %s\n' "$mode" \
+    "$(printf '%s' "$focused" | jq -r '"\(.rect.x) \(.rect.y) \(.rect.width) \(.rect.height)"')" \
+    >"$state"
+
+[ "$mode" = tiled ] && i3-msg -q 'floating enable'
+
+# shellcheck disable=SC2046
+set -- $(i3-msg -t get_workspaces \
+    | jq -r '.[] | select(.focused) | "\(.rect.x) \(.rect.y) \(.rect.width) \(.rect.height)"')
 i3-msg -q "resize set $3 px $4 px, move position $1 px $2 px"
