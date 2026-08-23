@@ -61,10 +61,26 @@ New flags, all documented in the patched `i3lock(1)`:
 
 ```bash
 ./build.sh          # --keep leaves the build tree for inspection
+                    # --wrapper-only installs owl-lock and stops
+                    # --yes installs build deps without asking
 ```
 
-Clones i3lock-color at the pinned tag, applies the patch, and installs to
-`/usr/local/bin/i3lock`, which precedes `/usr/bin` on `PATH`. The distro package
+This is the only thing that installs any part of the lock screen, and that is
+deliberate. `kali-deploy-physical` used to write `owl-lock` and
+`betterlockscreenrc` itself, which meant the rc path had two owners and a
+re-deploy silently reverted whichever one had not run last. The deploy's dots
+phase calls this script instead.
+
+**`owl-lock` is installed first** — before the dependency check, before the
+clone, before the compiler. It is five lines with no build requirements, and it
+is the piece that decides whether a failed lock leaves the screen open; the
+patched binary is the cosmetic half. So a box with no network, no compiler, or
+an upstream tag that has moved still locks correctly, falling back to the stock
+i3lock and its circle. That is why the deploy can call this without a build
+failure costing anyone their lock screen.
+
+It then clones i3lock-color at the pinned tag, applies the patch, and installs
+to `/usr/local/bin/i3lock`, which precedes `/usr/bin` on `PATH`. The distro package
 is left alone and still owned by dpkg — this adds a binary rather than replacing
 one, and `sudo rm /usr/local/bin/i3lock` is the entire uninstall.
 
@@ -104,3 +120,4 @@ Deliberately arranged so the worst case is ugly rather than open:
 | `box-indicator.patch` | the fork, against i3lock-color `2.13.c.5` |
 | `build.sh` | fetch, patch, build, install |
 | `betterlockscreenrc` | the styling; symlinked to `~/.config/betterlockscreen/` by `install.sh` |
+| `owl-lock` | the lock wrapper, installed to `/usr/local/bin` by `build.sh` |
