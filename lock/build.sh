@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
-# build.sh — build i3lock-color with the box indicator patch applied.
+# build.sh — install the lock screen: owl-lock, then i3lock-color patched with
+# the box indicator.
 #
-#   --keep    leave the build tree behind for inspection
+#   --keep          leave the build tree behind for inspection
+#   --wrapper-only  install owl-lock and stop; no compiler, no network
+#   --yes, -y       install missing build dependencies without asking
+#
+# This is the only thing that installs any part of the lock screen.
+# kali-deploy-physical used to write owl-lock and betterlockscreenrc itself and
+# no longer does: it calls this instead, so there is one place that owns the
+# lock screen rather than two that can disagree about it.
+#
+# Order matters here and is not incidental. owl-lock goes in FIRST, before the
+# dependency check and before anything is compiled, because it is five lines
+# with no build requirements and it is the piece that decides whether a failed
+# lock leaves the screen open. The patched binary is the cosmetic half. So a
+# machine where the build fails -- no network, no compiler, an upstream tag that
+# moved -- still ends up locking correctly, falling back to the stock i3lock
+# with its circle. Ugly and safe beats pretty and open.
 #
 # The patched binary goes to /usr/local/bin/i3lock, which precedes /usr/bin on
 # PATH. The distro package stays exactly where it is, still owned by dpkg: this
@@ -24,7 +40,43 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PATCH="$HERE/box-indicator.patch"
 
 KEEP=0
-[ "${1:-}" = "--keep" ] && KEEP=1
+WRAPPER_ONLY=0
+ASSUME_YES=0
+for a in "$@"; do
+    case "$a" in
+        --keep) KEEP=1 ;;
+        --wrapper-only) WRAPPER_ONLY=1 ;;
+        --yes|-y) ASSUME_YES=1 ;;
+        -h|--help) sed -n '2,21p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        *) echo "build.sh: unknown option '$a'" >&2; exit 1 ;;
+    esac
+done
+
+# The deploy script runs as root and has no sudo in its environment worth
+# relying on; a user running this by hand does. Resolve it once rather than
+# sprinkling `sudo` through the install steps.
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+else
+    echo "build.sh: need root or sudo to install into /usr/local" >&2
+    exit 1
+fi
+
+# --- owl-lock, first and unconditionally -----------------------------------
+#
+# Before the dep check, before the clone, before the compiler. See the header:
+# this is the piece that must be present for the screen to lock at all, and it
+# costs nothing to install.
+[ -f "$HERE/owl-lock" ] || { echo "build.sh: no owl-lock at $HERE" >&2; exit 1; }
+$SUDO install -m 755 "$HERE/owl-lock" /usr/local/bin/owl-lock
+echo "==> installed /usr/local/bin/owl-lock"
+
+if [ "$WRAPPER_ONLY" -eq 1 ]; then
+    echo "done (--wrapper-only: patched i3lock not built)"
+    exit 0
+fi
 
 # Build deps. Listed here rather than in a README so that the failure mode is a
 # printable command instead of a compiler error forty lines deep.
@@ -42,11 +94,23 @@ for d in "${DEPS[@]}"; do
     dpkg -s "$d" >/dev/null 2>&1 || missing+=("$d")
 done
 if [ ${#missing[@]} -gt 0 ]; then
-    echo "build.sh: missing build dependencies. Run:" >&2
-    echo >&2
-    echo "    sudo apt-get install -y ${missing[*]}" >&2
-    echo >&2
-    exit 1
+    if [ "$ASSUME_YES" -eq 1 ]; then
+        # Non-interactive path, used by kali-deploy-physical. The deps live here
+        # rather than in the deploy script's package list so that the lock
+        # screen stays one self-contained thing: whatever building it needs is
+        # this script's business, and a deploy does not carry eighteen -dev
+        # packages it would otherwise never mention.
+        echo "==> installing build dependencies: ${missing[*]}"
+        DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y "${missing[@]}" \
+            || { echo "build.sh: could not install build dependencies" >&2; exit 1; }
+    else
+        echo "build.sh: missing build dependencies. Run:" >&2
+        echo >&2
+        echo "    sudo apt-get install -y ${missing[*]}" >&2
+        echo >&2
+        echo "or re-run this script with --yes to install them automatically." >&2
+        exit 1
+    fi
 fi
 
 [ -f "$PATCH" ] || { echo "build.sh: no patch at $PATCH" >&2; exit 1; }
@@ -104,17 +168,10 @@ fi
 # lays down a systemd unit and a pam.d file, and the distro package already
 # owns working copies of both. Overwriting a working PAM config from a
 # hand-built tree is exactly the way to end up locked out.
-echo "==> installing /usr/local/bin/i3lock (needs sudo)"
-sudo install -m 755 "$BINARY" /usr/local/bin/i3lock
-sudo install -d -m 755 /usr/local/share/man/man1
-sudo install -m 644 i3lock.1 /usr/local/share/man/man1/i3lock.1
-
-# owl-lock goes in the same trip, because it is the thing that makes a failure
-# here survivable: if the patched binary is missing or rejects a flag, this is
-# what still gets the screen locked. Installing the rc without it would mean the
-# one new failure mode this repo introduces has no net under it.
-echo "==> installing /usr/local/bin/owl-lock"
-sudo install -m 755 "$HERE/owl-lock" /usr/local/bin/owl-lock
+echo "==> installing /usr/local/bin/i3lock"
+$SUDO install -m 755 "$BINARY" /usr/local/bin/i3lock
+$SUDO install -d -m 755 /usr/local/share/man/man1
+$SUDO install -m 644 i3lock.1 /usr/local/share/man/man1/i3lock.1
 
 echo
 echo "done. /usr/local/bin/i3lock now shadows /usr/bin/i3lock:"
